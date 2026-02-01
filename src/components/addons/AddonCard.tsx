@@ -452,7 +452,7 @@ export function AddonCard({
               <CardTitle className="text-base font-semibold truncate leading-tight">
                 {addon.metadata?.customName || addon.manifest.name}
               </CardTitle>
-              <CardDescription className="flex items-center gap-1.5 mt-1 overflow-hidden">
+              <CardDescription className="flex flex-wrap items-center gap-1.5 mt-1 overflow-hidden">
                 <span className="text-xs truncate">v{addon.manifest.version}</span>
                 {isOnline !== undefined && (
                   <span

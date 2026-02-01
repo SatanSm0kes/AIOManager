@@ -13,7 +13,6 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { ArrowLeft, GripVertical, Library, RefreshCw, Save, Plus, ShieldCheck } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateAddons } from '@/api/addons'
 import { AddonCard } from './AddonCard'
 import { AddonReorderDialog } from './AddonReorderDialog'
 import { InstallSavedAddonDialog } from './InstallSavedAddonDialog'
@@ -119,24 +118,12 @@ export function AddonList({ accountId }: AddonListProps) {
     if (!account || !encryptionKey) return
 
     try {
-      const authKey = await decrypt(account.authKey, encryptionKey)
-      const protectedAddons = addons.map(addon => ({
-        ...addon,
-        flags: {
-          ...addon.flags,
-          protected: true
-        }
-      }))
-
-      await updateAddons(authKey, protectedAddons)
+      await useAccountStore.getState().bulkProtectAddons(accountId, true)
 
       toast({
         title: 'Addons Protected',
         description: 'All addons have been marked as protected.'
       })
-
-      // Refresh account to reflect changes
-      await syncAccount(accountId)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -144,7 +131,7 @@ export function AddonList({ accountId }: AddonListProps) {
         description: error instanceof Error ? error.message : 'Unknown error'
       })
     }
-  }, [account, encryptionKey, addons, toast, syncAccount, accountId])
+  }, [account, encryptionKey, accountId, toast])
 
   const handleUpdateAll = useCallback(async () => {
     if (!account || !encryptionKey) return

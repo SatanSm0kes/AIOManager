@@ -125,6 +125,7 @@ interface AccountStore {
   updateAddonMetadata: (accountId: string, transportUrl: string, metadata: { customName?: string; customLogo?: string; customDescription?: string }) => Promise<void>
   moveAccount: (id: string, direction: 'up' | 'down') => Promise<void>
   reorderAccounts: (newOrder: string[]) => Promise<void>
+  bulkProtectAddons: (accountId: string, isProtected: boolean) => Promise<void>
   clearError: () => void
   reset: () => Promise<void>
 }
@@ -1102,6 +1103,41 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       throw error
     } finally {
       set({ loading: false })
+    }
+  },
+
+  bulkProtectAddons: async (accountId, isProtected) => {
+    try {
+      const account = get().accounts.find((acc) => acc.id === accountId)
+      if (!account) return
+
+      const updatedAddons = account.addons.map(addon => ({
+        ...addon,
+        flags: {
+          ...addon.flags,
+          protected: isProtected
+        }
+      }))
+
+      // Update local state immediately (Optimistic UI)
+      const updatedAccount = { ...account, addons: updatedAddons }
+      const accounts = get().accounts.map(acc => acc.id === accountId ? updatedAccount : acc)
+
+      set({ accounts })
+      await localforage.setItem(STORAGE_KEY, accounts)
+
+      // Sync to server
+      const authKey = await decrypt(account.authKey, getEncryptionKey())
+      await updateAddons(authKey, updatedAddons)
+
+    } catch (err) {
+      console.error('Failed to bulk protect addons', err)
+      const message = err instanceof Error ? err.message : 'Failed to save protection status'
+      toast({
+        variant: 'destructive',
+        title: 'Protection Sync Failed',
+        description: message
+      })
     }
   },
 

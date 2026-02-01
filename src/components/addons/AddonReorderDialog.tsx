@@ -75,8 +75,8 @@ export function AddonReorderDialog({
 
     if (over && active.id !== over.id) {
       setItems((items) => {
-        const oldIndex = items.findIndex((item) => item.manifest.id === active.id)
-        const newIndex = items.findIndex((item) => item.manifest.id === over.id)
+        const oldIndex = items.findIndex((item) => item.transportUrl === active.id)
+        const newIndex = items.findIndex((item) => item.transportUrl === over.id)
         return arrayMove(items, oldIndex, newIndex)
       })
     }
@@ -117,12 +117,12 @@ export function AddonReorderDialog({
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={items.map((item) => item.manifest.id)}
+              items={items.map((item) => item.transportUrl)}
               strategy={verticalListSortingStrategy}
             >
               <div className="space-y-2">
                 {items.map((addon) => (
-                  <SortableAddonItem key={addon.manifest.id} id={addon.manifest.id} addon={addon} />
+                  <SortableAddonItem key={addon.transportUrl} id={addon.transportUrl} addon={addon} />
                 ))}
               </div>
             </SortableContext>
