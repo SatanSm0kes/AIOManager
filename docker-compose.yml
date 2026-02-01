@@ -10,7 +10,7 @@ services:
     volumes:
       - ./aio-data:/app/data
     healthcheck:
-      # We use node directly because there is no shell/curl in Distroless
+      # NOTE: If you use Traefik/Reverse Proxies and see 404s, remove the healthcheck block.
       test: [ "CMD", "node", "server/healthcheck.js" ]
       interval: 1m
       timeout: 10s
