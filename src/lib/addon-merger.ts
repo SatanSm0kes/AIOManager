@@ -106,7 +106,7 @@ export async function mergeAddons(
  */
 export function removeAddons(
   currentAddons: AddonDescriptor[],
-  addonIds: string[]
+  idsOrUrls: string[]
 ): {
   addons: AddonDescriptor[]
   removed: string[]
@@ -116,7 +116,8 @@ export function removeAddons(
   const protectedAddons: string[] = []
 
   const updatedAddons = currentAddons.filter((addon) => {
-    const shouldRemove = addonIds.includes(addon.manifest.id)
+    // Check if the addon's ID OR its transport URL is in the removal list
+    const shouldRemove = idsOrUrls.includes(addon.manifest.id) || idsOrUrls.includes(addon.transportUrl)
 
     if (shouldRemove) {
       // Don't remove protected addons

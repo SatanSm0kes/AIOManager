@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -7,13 +8,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+// import { Textarea } from '@/components/ui/textarea' 
 import { useAddonStore } from '@/store/addonStore'
 import { StremioAccount } from '@/types/account'
 import { BulkResult } from '@/types/saved-addon'
+import { Copy, Globe, LayoutGrid, Loader2, PlusCircle, RefreshCw, Tags, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 interface BulkActionsDialogProps {
   selectedAccounts: StremioAccount[]
+
+  // We need all accounts for cloning (to pick source)
+  // Ideally this component should receive them or fetch them. 
+  // Let's assume the parent can pass them or we use a store. 
+  // For now, let's limit "Cloning" to only be possible if we have access to the source account in the list?
+  // Actually, the user might want to clone FROM an account that is NOT selected.
+  // The 'selectedAccounts' are the TARGETS.
+  // We need a list of 'potential sources'.
+  allAccounts?: StremioAccount[]
   onClose: () => void
 }
 
@@ -23,8 +35,10 @@ type BulkAction =
   | 'remove-addons'
   | 'remove-by-tag'
   | 'update-addons'
+  | 'install-from-url'
+  | 'clone-account'
 
-export function BulkActionsDialog({ selectedAccounts, onClose }: BulkActionsDialogProps) {
+export function BulkActionsDialog({ selectedAccounts, allAccounts = [], onClose }: BulkActionsDialogProps) {
   const {
     library,
     getAllTags,
@@ -33,6 +47,8 @@ export function BulkActionsDialog({ selectedAccounts, onClose }: BulkActionsDial
     bulkRemoveAddons,
     bulkRemoveByTag,
     bulkReinstallAddons,
+    bulkInstallFromUrls,
+    bulkCloneAccount,
     loading,
   } = useAddonStore()
 
@@ -41,6 +57,11 @@ export function BulkActionsDialog({ selectedAccounts, onClose }: BulkActionsDial
   const [selectedTag, setSelectedTag] = useState<string>('')
   const [selectedAddonIds, setSelectedAddonIds] = useState<Set<string>>(new Set())
   const [selectedUpdateAddonIds, setSelectedUpdateAddonIds] = useState<Set<string>>(new Set())
+
+  // New State
+  const [urlList, setUrlList] = useState<string>('')
+  const [sourceAccountId, setSourceAccountId] = useState<string>('')
+
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [result, setResult] = useState<BulkResult | null>(null)
@@ -145,12 +166,34 @@ export function BulkActionsDialog({ selectedAccounts, onClose }: BulkActionsDial
           }
           bulkResult = await bulkReinstallAddons(Array.from(selectedUpdateAddonIds), accountsData)
           break
+
+        case 'install-from-url':
+          const urls = urlList.split('\n').map(u => u.trim()).filter(u => u.length > 0)
+          if (urls.length === 0) {
+            setError('Please enter at least one URL')
+            return
+          }
+          bulkResult = await bulkInstallFromUrls(urls, accountsData)
+          break
+
+        case 'clone-account':
+          if (!sourceAccountId) {
+            setError('Please select a source account')
+            return
+          }
+          const sourceAccount = allAccounts.find(a => a.id === sourceAccountId)
+          if (!sourceAccount) {
+            setError('Source account not found')
+            return
+          }
+          bulkResult = await bulkCloneAccount({ id: sourceAccount.id, authKey: sourceAccount.authKey }, accountsData)
+          break
       }
 
-      setResult(bulkResult)
+      setResult(bulkResult!)
       setSuccess(true)
 
-      if (bulkResult.failed === 0) {
+      if (bulkResult?.failed === 0 && !bulkResult.details.some(d => d.result.skipped?.length > 0 || 0)) {
         setTimeout(() => {
           onClose()
         }, 2000)
@@ -161,241 +204,406 @@ export function BulkActionsDialog({ selectedAccounts, onClose }: BulkActionsDial
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 py-4">
       {/* Success Message */}
       {success && result && (
-        <div className="p-3 rounded-md bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
-          <p className="text-sm text-green-600 dark:text-green-400 font-medium">
-            Operation completed on {result.success} account
-            {result.success !== 1 ? 's' : ''}
-            {result.failed > 0 && ` (${result.failed} failed)`}
-          </p>
+        <div className={`p-3 rounded-md border animate-in fade-in slide-in-from-top-2 ${result.details.some(d => (d.result as any).skipped?.length > 0) || result.failed > 0
+          ? "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800"
+          : "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
+          }`}>
+          <div className="flex flex-col gap-1">
+            <p className={`text-sm font-medium flex items-center gap-2 ${result.failed > 0
+              ? "text-amber-600 dark:text-amber-400"
+              : "text-green-600 dark:text-green-400"
+              }`}>
+              <Loader2 className="h-4 w-4" />
+              Operation completed on {result.success} account{result.success !== 1 ? 's' : ''}
+              {result.failed > 0 && ` (${result.failed} failed)`}
+            </p>
+            {/* Show skipped/protected summary */}
+            {result.details.some(d => (d.result as any).skipped?.length > 0) && (
+              <p className="text-xs text-muted-foreground ml-6">
+                Info: {result.details.reduce((acc, d) => acc + (d.result as any).added?.length, 0)} installed.
+                {' '}
+                {result.details.reduce((acc, d) => acc + ((d.result as any).skipped?.length || 0), 0)} items were skipped or failed.
+              </p>
+            )}
+            {result.details.some(d => d.result.protected?.length > 0) && (
+              <p className="text-xs text-muted-foreground ml-6">
+                Info: {result.details.reduce((acc, d) => acc + (d.result.protected?.length || 0), 0)} protected addons were preserved.
+              </p>
+            )}
+            {/* Show failed accounts summary */}
+            {result.errors.length > 0 && (
+              <ul className="text-xs text-destructive ml-6 list-disc">
+                {result.errors.map((e, i) => (
+                  <li key={i}>Account {e.accountId.substring(0, 8)}...: {e.error}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       )}
 
       {/* Error Display */}
       {error && (
-        <div className="p-3 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <div className="p-3 rounded-md bg-destructive/10 border border-destructive/50 animate-in fade-in slide-in-from-top-2">
+          <p className="text-sm text-destructive font-medium">{error}</p>
         </div>
       )}
 
-      {/* Selected Accounts */}
-      <div className="p-3 rounded-md bg-muted/50 border">
-        <p className="text-sm font-medium text-foreground">
-          {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''} selected
-        </p>
-      </div>
-
-      {/* Action Selection */}
-      <div className="space-y-2">
-        <Label>Action</Label>
-        <Select value={action} onValueChange={(v) => setAction(v as BulkAction)}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="add-saved-addons">Add Saved Addon(s)</SelectItem>
-            <SelectItem value="add-by-tag">Add Addons by Tag</SelectItem>
-            <SelectItem value="remove-addons">Remove Addon(s)</SelectItem>
-            <SelectItem value="remove-by-tag">Remove Addons by Tag</SelectItem>
-            <SelectItem value="update-addons">Update Addon(s)</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      {/* Add Saved Addons */}
-      {action === 'add-saved-addons' && (
-        <>
-          <div className="space-y-2">
-            <Label>Select Saved Addons ({selectedSavedAddonIds.size} selected)</Label>
-            <div className="border rounded-md max-h-64 overflow-y-auto">
-              {savedAddons.length === 0 ? (
-                <p className="text-sm text-muted-foreground p-4 text-center">
-                  No saved addons available
-                </p>
-              ) : (
-                <div className="divide-y">
-                  {savedAddons.map((savedAddon) => (
-                    <label
-                      key={savedAddon.id}
-                      className="flex items-center gap-3 p-3 hover:bg-accent/50 dark:hover:bg-accent/30 cursor-pointer transition-colors"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedSavedAddonIds.has(savedAddon.id)}
-                        onChange={() => toggleSavedAddon(savedAddon.id)}
-                      />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{savedAddon.name}</p>
-                        <p className="text-xs text-muted-foreground">{savedAddon.manifest.name}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Add by Tag */}
-      {action === 'add-by-tag' && (
-        <>
-          <div className="space-y-2">
-            <Label>Select Tag</Label>
-            <Select value={selectedTag} onValueChange={setSelectedTag}>
-              <SelectTrigger>
-                <SelectValue placeholder="Choose a tag..." />
-              </SelectTrigger>
-              <SelectContent>
-                {allTags.map((tag) => {
-                  const count = savedAddons.filter((addon) => addon.tags.includes(tag)).length
-                  return (
-                    <SelectItem key={tag} value={tag}>
-                      {tag} ({count} saved addons)
-                    </SelectItem>
-                  )
-                })}
-              </SelectContent>
-            </Select>
-            {isInvalidTag && (
-              <p className="text-xs text-destructive mt-1">
-                No saved addons found with this tag. This action will have no effect.
-              </p>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* Remove Addons */}
-      {action === 'remove-addons' && (
-        <div className="space-y-2">
-          <Label>Select Addons ({selectedAddonIds.size} selected)</Label>
-          <div className="border rounded-md max-h-64 overflow-y-auto">
-            {allAddons.length === 0 ? (
-              <p className="text-sm text-muted-foreground p-4 text-center">No addons available</p>
-            ) : (
-              <div className="divide-y">
-                {allAddons.map((addon) => (
-                  <label
-                    key={addon.manifest.id}
-                    className="flex items-center gap-3 p-3 hover:bg-accent/50 dark:hover:bg-accent/30 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedAddonIds.has(addon.manifest.id)}
-                      onChange={() => toggleAddon(addon.manifest.id)}
-                      disabled={addon.flags?.protected}
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">
-                        {addon.manifest.name}
-                        {(addon.flags?.protected || addon.flags?.official) && (
-                          <span className="ml-2 text-xs text-yellow-600">
-                            ({addon.flags?.protected ? 'Protected' : 'Official'})
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{addon.manifest.id}</p>
+      <div className="flex flex-col gap-6">
+        {/* Action Selector Card */}
+        <Card className="border shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wide text-muted-foreground">
+              <LayoutGrid className="h-4 w-4" />
+              Select Action
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Label htmlFor="action-select">I want to...</Label>
+              <Select value={action} onValueChange={(v) => setAction(v as BulkAction)}>
+                <SelectTrigger id="action-select" className="bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="add-saved-addons">
+                    <div className="flex items-center gap-2">
+                      <PlusCircle className="h-4 w-4 text-primary" />
+                      <span>Install Saved Addons</span>
                     </div>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Remove by Tag */}
-      {action === 'remove-by-tag' && (
-        <div className="space-y-2">
-          <Label>Select Tag</Label>
-          <Select value={selectedTag} onValueChange={setSelectedTag}>
-            <SelectTrigger>
-              <SelectValue placeholder="Choose a tag..." />
-            </SelectTrigger>
-            <SelectContent>
-              {allTags.map((tag) => {
-                const count = savedAddons.filter((addon) => addon.tags.includes(tag)).length
-                return (
-                  <SelectItem key={tag} value={tag}>
-                    {tag} ({count} saved addons)
                   </SelectItem>
-                )
-              })}
-            </SelectContent>
-          </Select>
-          {isInvalidTag && (
-            <p className="text-xs text-destructive mt-1">
-              No saved addons found with this tag. This action will have no effect.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Update Addons */}
-      {action === 'update-addons' && (
-        <div className="space-y-2">
-          <Label>Select Addons to Update ({selectedUpdateAddonIds.size} selected)</Label>
-          <p className="text-xs text-muted-foreground">
-            Re-install selected addons to get the latest version from their source URL. Addon
-            positions will be preserved.
-          </p>
-          <div className="border rounded-md max-h-64 overflow-y-auto">
-            {allAddons.length === 0 ? (
-              <p className="text-sm text-muted-foreground p-4 text-center">No addons available</p>
-            ) : (
-              <div className="divide-y">
-                {allAddons.map((addon) => (
-                  <label
-                    key={addon.manifest.id}
-                    className="flex items-center gap-3 p-3 hover:bg-accent/50 dark:hover:bg-accent/30 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedUpdateAddonIds.has(addon.manifest.id)}
-                      onChange={() => {
-                        setSelectedUpdateAddonIds((prev) => {
-                          const newSet = new Set(prev)
-                          if (newSet.has(addon.manifest.id)) {
-                            newSet.delete(addon.manifest.id)
-                          } else {
-                            newSet.add(addon.manifest.id)
-                          }
-                          return newSet
-                        })
-                      }}
-                      disabled={addon.flags?.protected}
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">
-                        {addon.manifest.name}
-                        {addon.flags?.protected && (
-                          <span className="ml-2 text-xs text-yellow-600">(Protected)</span>
-                        )}
-                      </p>
-                      <p className="text-xs text-muted-foreground">v{addon.manifest.version}</p>
+                  <SelectItem value="add-by-tag">
+                    <div className="flex items-center gap-2">
+                      <Tags className="h-4 w-4 text-blue-500" />
+                      <span>Install Addons by Tag</span>
                     </div>
-                  </label>
-                ))}
+                  </SelectItem>
+                  <SelectItem value="install-from-url">
+                    <div className="flex items-center gap-2">
+                      <Globe className="h-4 w-4 text-indigo-500" />
+                      <span>Install from URLs</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="clone-account">
+                    <div className="flex items-center gap-2">
+                      <Copy className="h-4 w-4 text-purple-500" />
+                      <span>Clone from Account</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="update-addons">
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4 text-orange-500" />
+                      <span>Update Existing Addons</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="remove-addons">
+                    <div className="flex items-center gap-2">
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                      <span>Remove Specific Addons</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="remove-by-tag">
+                    <div className="flex items-center gap-2">
+                      <Tags className="h-4 w-4 text-destructive" />
+                      <span>Remove Addons by Tag</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Dynamic Content Card */}
+        <Card className="border shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wide text-muted-foreground">
+              {action.includes('tag') ? <Tags className="h-4 w-4" /> :
+                action.includes('remove') ? <Trash2 className="h-4 w-4" /> :
+                  action.includes('update') ? <RefreshCw className="h-4 w-4" /> :
+                    action === 'install-from-url' ? <Globe className="h-4 w-4" /> :
+                      action === 'clone-account' ? <Copy className="h-4 w-4" /> :
+                        <PlusCircle className="h-4 w-4" />}
+              Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {/* Add Saved Addons */}
+            {action === 'add-saved-addons' && (
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <Label>Select Saved Addons</Label>
+                  <span className="text-xs text-muted-foreground">{selectedSavedAddonIds.size} selected</span>
+                </div>
+                <div className="border rounded-md max-h-60 overflow-y-auto bg-background">
+                  {savedAddons.length === 0 ? (
+                    <p className="text-sm text-muted-foreground p-8 text-center italic">
+                      No saved addons in your library.
+                    </p>
+                  ) : (
+                    <div className="divide-y">
+                      {savedAddons.map((savedAddon) => (
+                        <label
+                          key={savedAddon.id}
+                          className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300 text-primary focus:ring-primary"
+                            checked={selectedSavedAddonIds.has(savedAddon.id)}
+                            onChange={() => toggleSavedAddon(savedAddon.id)}
+                          />
+                          {savedAddon.metadata?.customLogo || savedAddon.manifest.logo ? (
+                            <img
+                              src={savedAddon.metadata?.customLogo || savedAddon.manifest.logo}
+                              alt={savedAddon.name}
+                              className="w-8 h-8 rounded object-contain flex-shrink-0 bg-transparent"
+                              onError={(e) => { e.currentTarget.style.display = 'none' }}
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                              <span className="text-xs text-muted-foreground">📦</span>
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium truncate">{savedAddon.name}</p>
+                              {savedAddon.tags.slice(0, 3).map(tag => (
+                                <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-muted rounded-full text-muted-foreground">{tag}</span>
+                              ))}
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">{savedAddon.manifest.name}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
+
+            {/* Add by Tag */}
+            {action === 'add-by-tag' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Select Tag to Install</Label>
+                  <Select value={selectedTag} onValueChange={setSelectedTag}>
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Choose a tag..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allTags.map((tag) => {
+                        const count = savedAddons.filter((addon) => addon.tags.includes(tag)).length
+                        return (
+                          <SelectItem key={tag} value={tag}>
+                            {tag} <span className="text-muted-foreground ml-1">({count} addons)</span>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                  {isInvalidTag && (
+                    <p className="text-xs text-destructive mt-1 font-medium flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" /> {/* Placeholder icon */}
+                      No saved addons found with this tag.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* NEW: Install from URL */}
+            {action === 'install-from-url' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Manifest URLs</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Paste addon manifest URLs here, one per line. They will be fetched and installed on all selected accounts.
+                  </p>
+                  <textarea
+                    className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="https://v3-cinemeta.strem.io/manifest.json&#10;https://opensubtitles.strem.io/manifest.json"
+                    value={urlList}
+                    onChange={(e) => setUrlList(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* NEW: Clone Account */}
+            {action === 'clone-account' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Source Account</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Select an account to copy addons FROM. These addons will be <b>added</b> to the selected target accounts (existing addons on targets will be preserved).
+                  </p>
+                  <Select value={sourceAccountId} onValueChange={setSourceAccountId}>
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Select source account..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allAccounts.map(acc => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          {acc.name !== acc.email ? acc.name : acc.email}
+                        </SelectItem>
+                      ))}
+                      {allAccounts.length === 0 && <SelectItem value="none" disabled>No accounts available</SelectItem>}
+                    </SelectContent>
+                  </Select>
+                  {selectedAccounts.some(s => s.id === sourceAccountId) && (
+                    <p className="text-xs text-amber-600 font-medium">
+                      Warning: Source account is also in the target list. It will be skipped.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Remove Addons */}
+            {action === 'remove-addons' && (
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <Label>Select Addons to Remove</Label>
+                  <span className="text-xs text-muted-foreground">{selectedAddonIds.size} selected</span>
+                </div>
+                <div className="border rounded-md max-h-60 overflow-y-auto bg-background">
+                  {allAddons.length === 0 ? (
+                    <p className="text-sm text-muted-foreground p-8 text-center italic">No installed addons found on selected accounts.</p>
+                  ) : (
+                    <div className="divide-y">
+                      {allAddons.map((addon) => (
+                        <label
+                          key={addon.manifest.id}
+                          className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300 text-destructive focus:ring-destructive"
+                            checked={selectedAddonIds.has(addon.manifest.id)}
+                            onChange={() => toggleAddon(addon.manifest.id)}
+                            disabled={addon.flags?.protected}
+                          />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">
+                              {addon.manifest.name}
+                              {(addon.flags?.protected || addon.flags?.official) && (
+                                <span className="ml-2 text-xs font-normal text-amber-600 bg-amber-100 dark:bg-amber-900/30 px-1.5 py-0.5 rounded">
+                                  {addon.flags?.protected ? 'Protected' : 'Official'}
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{addon.manifest.id}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Remove by Tag */}
+            {action === 'remove-by-tag' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Select Tag to Remove</Label>
+                  <Select value={selectedTag} onValueChange={setSelectedTag}>
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Choose a tag..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allTags.map((tag) => {
+                        const count = savedAddons.filter((addon) => addon.tags.includes(tag)).length
+                        return (
+                          <SelectItem key={tag} value={tag}>
+                            {tag} <span className="text-muted-foreground ml-1">({count} known addons)</span>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            {/* Update Addons */}
+            {action === 'update-addons' && (
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <Label>Select Addons to Update</Label>
+                  <span className="text-xs text-muted-foreground">{selectedUpdateAddonIds.size} selected</span>
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Re-installs selected addons from their source URL to get the latest version.
+                </p>
+                <div className="border rounded-md max-h-60 overflow-y-auto bg-background">
+                  {allAddons.length === 0 ? (
+                    <p className="text-sm text-muted-foreground p-8 text-center italic">No addons available.</p>
+                  ) : (
+                    <div className="divide-y">
+                      {allAddons.map((addon) => (
+                        <label
+                          key={addon.manifest.id}
+                          className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300 text-primary focus:ring-primary"
+                            checked={selectedUpdateAddonIds.has(addon.manifest.id)}
+                            onChange={() => {
+                              setSelectedUpdateAddonIds((prev) => {
+                                const newSet = new Set(prev)
+                                if (newSet.has(addon.manifest.id)) {
+                                  newSet.delete(addon.manifest.id)
+                                } else {
+                                  newSet.add(addon.manifest.id)
+                                }
+                                return newSet
+                              })
+                            }}
+                            disabled={addon.flags?.protected}
+                          />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">
+                              {addon.manifest.name}
+                              {addon.flags?.protected && (
+                                <span className="ml-2 text-xs text-amber-600 bg-amber-100 dark:bg-amber-900/30 px-1.5 py-0.5 rounded">Protected</span>
+                              )}
+                            </p>
+                            <p className="text-xs text-muted-foreground">v{addon.manifest.version}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Actions */}
-      <div className="flex gap-2 pt-4">
+      <div className="flex gap-3 pt-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onClose}
+          className="flex-1"
+        >
+          {success ? 'Close' : 'Cancel'}
+        </Button>
         <Button
           onClick={handleExecute}
           disabled={loading || success || isInvalidTag}
           className="flex-1"
         >
-          {loading ? 'Processing...' : success ? 'Done!' : 'Execute'}
-        </Button>
-        <Button type="button" variant="outline" onClick={onClose}>
-          {success ? 'Close' : 'Cancel'}
+          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {success ? 'Done' : 'Execute'}
         </Button>
       </div>
     </div>

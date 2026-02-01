@@ -135,17 +135,7 @@ export function SavedAddonCard({
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              {/* Selection Checkbox */}
-              {isSelectionMode && onToggleSelect && (
-                <div className="pr-2">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => onToggleSelect(savedAddon.id)}
-                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                  />
-                </div>
-              )}
+
 
               <div
                 className={`w-2 h-2 rounded-full shrink-0 ${getHealthStatusColor()}`}

@@ -126,6 +126,14 @@ interface AddonStore {
     addonIds: string[],
     accountIds: Array<{ id: string; authKey: string }>
   ) => Promise<BulkResult>
+  bulkInstallFromUrls: (
+    urls: string[],
+    accountIds: Array<{ id: string; authKey: string }>
+  ) => Promise<BulkResult>
+  bulkCloneAccount: (
+    sourceAccount: { id: string; authKey: string },
+    targetAccountIds: Array<{ id: string; authKey: string }>
+  ) => Promise<BulkResult>
 
   // === Sync ===
   syncAccountState: (accountId: string, accountAuthKey: string) => Promise<void>
@@ -542,6 +550,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     }
   },
 
+
+
   applySavedAddonToAccounts: async (savedAddonId, accountIds) => {
     const savedAddon = get().library[savedAddonId]
     if (!savedAddon) {
@@ -708,6 +718,11 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
             },
           })
 
+          // Critical: Explicitly remove from local account state to handle "disabled" addons
+          // (which are preserved during sync if only missing from remote)
+          const { useAccountStore } = await import('./accountStore')
+          await useAccountStore.getState().removeLocalAddons(accountId, addonIds)
+
           // Sync account state
           await get().syncAccountState(accountId, accountAuthKey)
         } catch (error) {
@@ -759,6 +774,10 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
             previousVersion?: string
             newVersion?: string
           }> = []
+          const skippedResults: Array<{
+            addonId: string
+            reason: 'already-exists' | 'protected' | 'fetch-failed'
+          }> = []
 
           for (const addonId of addonIds) {
             try {
@@ -773,6 +792,10 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
             } catch (error) {
               // Log but continue with other addons
               console.warn(`Failed to reinstall addon ${addonId} on account ${accountId}:`, error)
+              skippedResults.push({
+                addonId,
+                reason: 'fetch-failed'
+              })
             }
           }
 
@@ -788,7 +811,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
                 previousVersion: r.previousVersion,
                 newVersion: r.newVersion,
               })),
-              skipped: [],
+              skipped: skippedResults,
               protected: [],
             },
           })
@@ -814,10 +837,209 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     }
   },
 
+  bulkInstallFromUrls: async (urls, accountIds) => {
+    set({ loading: true, error: null })
+    try {
+      // 1. Fetch manifests for all URLs first
+      const manifestsResults = await Promise.allSettled(
+        urls.map((url) => fetchAddonManifest(url))
+      )
+
+      const validDescriptors: any[] = [] // Type safety fallback
+      const invalidUrls: string[] = []
+
+      manifestsResults.forEach((res, index) => {
+        if (res.status === 'fulfilled') {
+          validDescriptors.push(res.value)
+        } else {
+          invalidUrls.push(urls[index])
+          // console.warn(`[Bulk Install] Failed to fetch manifest for ${urls[index]}:`, res.reason)
+        }
+      })
+
+      if (validDescriptors.length === 0) {
+        // If ALL failed, we throw (or maybe we just return 0 success?)
+        // User wants "more information". Let's throw a descriptive error with the list.
+        throw new Error(`Failed to fetch manifests from: ${invalidUrls.join(', ')}`)
+      }
+
+      // 2. Apply to accounts
+      const result: BulkResult = {
+        success: 0,
+        failed: 0,
+        errors: [],
+        details: [],
+      }
+
+      for (const { id: accountId, authKey: accountAuthKey } of accountIds) {
+        try {
+          const authKey = await decrypt(accountAuthKey, getEncryptionKey())
+          const currentAddons = await getAddons(authKey)
+
+          const updatedAddons = [...currentAddons]
+          const mergeResultDetails: MergeResult = {
+            added: [],
+            updated: [],
+            skipped: [],
+            protected: [],
+          }
+
+          // Report invalid URLs as skipped/failed for this account operation
+          invalidUrls.forEach((url) => {
+            mergeResultDetails.skipped.push({ addonId: url, reason: 'fetch-failed' })
+          })
+
+          for (const newAddon of validDescriptors) {
+            const existingIndex = updatedAddons.findIndex(
+              (a) => a.transportUrl === newAddon.transportUrl
+            )
+
+            if (existingIndex >= 0) {
+              // Update behavior
+              const existing = updatedAddons[existingIndex]
+              if (existing.flags?.protected) {
+                mergeResultDetails.protected.push({
+                  addonId: existing.manifest.id,
+                  name: existing.manifest.name,
+                })
+                continue
+              }
+              updatedAddons[existingIndex] = newAddon
+              mergeResultDetails.updated.push({
+                addonId: newAddon.manifest.id,
+                oldUrl: existing.transportUrl,
+                newUrl: newAddon.transportUrl,
+              })
+            } else {
+              // Add behavior
+              updatedAddons.push(newAddon)
+              mergeResultDetails.added.push({
+                addonId: newAddon.manifest.id,
+                name: newAddon.manifest.name,
+                installUrl: newAddon.transportUrl,
+              })
+            }
+          }
+
+          await updateAddons(authKey, updatedAddons)
+
+          invalidUrls.forEach((url) => {
+            mergeResultDetails.skipped.push({ addonId: url, reason: 'fetch-failed' })
+          })
+
+          result.success++
+          result.details.push({ accountId, result: mergeResultDetails })
+          await get().syncAccountState(accountId, accountAuthKey)
+        } catch (error) {
+          result.failed++
+          result.errors.push({
+            accountId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          })
+        }
+      }
+
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to bulk install from URLs'
+      set({ error: message })
+      throw error
+    } finally {
+      set({ loading: false })
+    }
+  },
+
+  bulkCloneAccount: async (sourceAccount, targetAccountIds) => {
+    set({ loading: true, error: null })
+    try {
+      // 1. Fetch Source Addons (FROM LOCAL STATE to preserve Disabled/Protected flags)
+      const { useAccountStore } = await import('./accountStore')
+
+      // Ensure store is initialized so we don't miss local state
+      if (useAccountStore.getState().accounts.length === 0) {
+        await useAccountStore.getState().initialize()
+      }
+
+      const localSourceAccount = useAccountStore.getState().accounts.find(a => a.id === sourceAccount.id)
+
+      const sourceAddons = localSourceAccount ? localSourceAccount.addons : await getAddons(await decrypt(sourceAccount.authKey, getEncryptionKey()))
+
+      const result: BulkResult = {
+        success: 0,
+        failed: 0,
+        errors: [],
+        details: [],
+      }
+
+      // 2. Apply to Targets
+      for (const { id: accountId, authKey: accountAuthKey } of targetAccountIds) {
+        if (accountId === sourceAccount.id) continue // Skip self
+
+        try {
+          const authKey = await decrypt(accountAuthKey, getEncryptionKey())
+
+          // Get Target Addons (Use local state if available to be aware of local disabled/protected items)
+          const localTargetAccount = useAccountStore.getState().accounts.find(a => a.id === accountId)
+          const targetAddons = localTargetAccount ? localTargetAccount.addons : await getAddons(authKey)
+
+
+          // Safe Clone Strategy (Append/Copy Mode)
+          // 1. Start with existing target addons (PRESERVE EVERYTHING)
+          const newAddons = [...targetAddons]
+
+          // 2. Append source addons that don't exist in target
+          // 2. Append source addons (Allow Duplicates / Concatenate)
+          // User Goal: "Copy Everything" - even if it creates a duplicate.
+          // This ensures that source configurations (flags, metadata) are added alongside existing target addons.
+          sourceAddons.forEach(sourceAddon => {
+            // Clone the addon, explicitly preserving flags and metadata from source
+            const clonedAddon = {
+              ...sourceAddon,
+              flags: {
+                ...sourceAddon.flags,
+                enabled: sourceAddon.flags?.enabled ?? true,
+                protected: sourceAddon.flags?.protected ?? false
+              },
+              metadata: { ...sourceAddon.metadata }
+            }
+            newAddons.push(clonedAddon)
+          })
+
+          // Use reorderAddons to update both LOCAL and REMOTE state
+          await useAccountStore.getState().reorderAddons(accountId, newAddons)
+
+          result.success++
+          result.details.push({
+            accountId,
+            result: {
+              added: [],
+              updated: [],
+              skipped: [],
+              protected: [],
+            },
+          })
+
+          // Sync not needed as reorderAddons does it, but keeping it for safety
+          await get().syncAccountState(accountId, accountAuthKey)
+        } catch (error) {
+          result.failed++
+          result.errors.push({
+            accountId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          })
+        }
+      }
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to clone account'
+      set({ error: message })
+      throw error
+    } finally {
+      set({ loading: false })
+    }
+  },
+
   // === Sync ===
-
-
-
 
   syncAccountState: async (accountId, accountAuthKey) => {
     try {
@@ -830,7 +1052,9 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
       const installedAddons: InstalledAddon[] = []
 
       for (const addon of currentAddons) {
-        const existing = existingState?.installedAddons.find((a) => a.installUrl === addon.transportUrl)
+        const existing = existingState?.installedAddons.find(
+          (a) => a.installUrl === addon.transportUrl
+        )
 
         if (existing) {
           // Update existing
@@ -864,7 +1088,6 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
       await saveAccountAddonStates(accountStates)
 
       // CRITICAL: Trigger Dashboard Refresh
-      // This ensures the main accountStore reflects the changes made via the library
       const { useAccountStore } = await import('./accountStore')
       await useAccountStore.getState().syncAccount(accountId)
     } catch (error) {

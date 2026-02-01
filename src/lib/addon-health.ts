@@ -38,11 +38,11 @@ export async function checkAddonHealth(addonUrl: string): Promise<boolean> {
     // Continue to proxy
   }
 
-  // 2. Fallback to CORS proxy (slower but reliable)
+  // 2. Fallback to CORS proxy (AllOrigins)
   try {
     const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(manifestUrl)}`
     const controller = new AbortController()
-    const id = setTimeout(() => controller.abort(), 10000)
+    const id = setTimeout(() => controller.abort(), 8000)
 
     const response = await fetch(proxyUrl, {
       method: 'GET',
@@ -52,19 +52,39 @@ export async function checkAddonHealth(addonUrl: string): Promise<boolean> {
 
     clearTimeout(id)
     if (response.ok) {
-      // Validate content is JSON
       try {
         await response.json()
         return true
       } catch (e) {
-        // Not JSON, likely an error page
         return false
       }
     }
-    return false
+  } catch (err) {
+    // Continue to next proxy
+  }
+
+  // 3. Fallback to CORSProxy.io (Backup)
+  try {
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(manifestUrl)}`
+    const controller = new AbortController()
+    const id = setTimeout(() => controller.abort(), 8000)
+
+    const response = await fetch(proxyUrl, {
+      method: 'GET',
+      signal: controller.signal,
+      cache: 'no-cache'
+    })
+
+    clearTimeout(id)
+    if (response.ok) {
+      await response.json()
+      return true
+    }
   } catch (err) {
     return false
   }
+
+  return false
 }
 
 /**

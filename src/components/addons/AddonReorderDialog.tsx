@@ -41,7 +41,7 @@ export function AddonReorderDialog({
   open,
   onOpenChange,
 }: AddonReorderDialogProps) {
-  const [items, setItems] = useState<AddonDescriptor[]>([])
+  const [items, setItems] = useState<(AddonDescriptor & { uniqueId: string })[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reorderAddons = useAccountStore((state) => state.reorderAddons)
@@ -49,7 +49,8 @@ export function AddonReorderDialog({
   // Initialize items when dialog opens or addons change
   useEffect(() => {
     if (open) {
-      setItems(addons)
+      // Assign unique fallback IDs to support duplicates during reorg
+      setItems(addons.map((a, i) => ({ ...a, uniqueId: `${a.transportUrl}::${i}` })))
       setError(null)
     }
   }, [open, addons])
@@ -75,8 +76,8 @@ export function AddonReorderDialog({
 
     if (over && active.id !== over.id) {
       setItems((items) => {
-        const oldIndex = items.findIndex((item) => item.transportUrl === active.id)
-        const newIndex = items.findIndex((item) => item.transportUrl === over.id)
+        const oldIndex = items.findIndex((item) => item.uniqueId === active.id)
+        const newIndex = items.findIndex((item) => item.uniqueId === over.id)
         return arrayMove(items, oldIndex, newIndex)
       })
     }
@@ -117,12 +118,12 @@ export function AddonReorderDialog({
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={items.map((item) => item.transportUrl)}
+              items={items.map((item) => item.uniqueId)} // Use unique IDs
               strategy={verticalListSortingStrategy}
             >
               <div className="space-y-2">
                 {items.map((addon) => (
-                  <SortableAddonItem key={addon.transportUrl} id={addon.transportUrl} addon={addon} />
+                  <SortableAddonItem key={addon.uniqueId} id={addon.uniqueId} addon={addon} />
                 ))}
               </div>
             </SortableContext>

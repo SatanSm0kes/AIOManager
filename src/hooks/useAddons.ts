@@ -18,5 +18,6 @@ export function useAddons(accountId?: string) {
     error,
     installAddon,
     removeAddon,
+    removeAddonByIndex: useAccountStore((state) => state.removeAddonByIndexFromAccount),
   }
 }

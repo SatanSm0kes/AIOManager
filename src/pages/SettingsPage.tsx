@@ -501,7 +501,7 @@ export function SettingsPage() {
                     <p className="text-sm text-muted-foreground">Irreversible actions. Proceed with caution.</p>
                 </div>
 
-                <div className="p-4 rounded-lg border border-destructive/50 bg-destructive/5 space-y-4">
+                <div className="p-4 rounded-lg border border-destructive bg-destructive/20 space-y-4">
                     {/* Unsafe Mode Toggle */}
                     <div className="flex items-center justify-between p-3 rounded-lg border border-destructive/30 bg-background">
                         <div className="flex items-center gap-3">

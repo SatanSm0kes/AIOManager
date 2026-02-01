@@ -83,15 +83,7 @@ export function AccountCard({
 
         <div className={`flex items-center justify-between ${restProps.dragHandleProps ? 'pl-8' : ''}`}>
           <div className="flex items-center gap-4 flex-1 min-w-0">
-            {onToggleSelect && isSelectionMode && (
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onChange={() => onToggleSelect(account.id)}
-                onClick={(e) => e.stopPropagation()}
-                className="h-4 w-4"
-              />
-            )}
+
             <div className="flex-1 min-w-0">
               <CardTitle className="flex items-center gap-2 text-lg font-semibold truncate tracking-tight">
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusColor}`} />

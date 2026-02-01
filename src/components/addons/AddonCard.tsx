@@ -126,6 +126,12 @@ interface AddonCardProps {
   latestVersion?: string
   isOnline?: boolean
   loading?: boolean
+  loader?: boolean
+  isSelectionMode?: boolean
+  isSelected?: boolean
+  onToggleSelect?: (addonId: string) => void
+  selectionId?: string
+  index?: number // Optional for index-based targeting (handling duplicates)
 }
 
 export function AddonCard({
@@ -137,6 +143,11 @@ export function AddonCard({
   latestVersion,
   isOnline,
   loading,
+  isSelectionMode,
+  isSelected,
+  onToggleSelect,
+  selectionId,
+  index
 }: AddonCardProps) {
   const { library, createSavedAddon, loading: storeLoading } = useAddonStore()
   const { profiles, initialize: initProfiles, createProfile } = useProfileStore()
@@ -169,7 +180,7 @@ export function AddonCard({
 
   const handleSaveMetadata = async (metadata: { customName?: string; customLogo?: string; customDescription?: string }) => {
     try {
-      await useAccountStore.getState().updateAddonMetadata(accountId, addon.transportUrl, metadata)
+      await useAccountStore.getState().updateAddonMetadata(accountId, addon.transportUrl, metadata, index)
       toast({
         title: 'Appearance Updated',
         description: 'Addon metadata has been customized and synced to Stremio.'
@@ -398,11 +409,11 @@ export function AddonCard({
       setShowUnprotectConfirmation(true)
       return
     }
-    useAccountStore.getState().toggleAddonProtection(accountId, addon.transportUrl, !addon.flags?.protected)
+    useAccountStore.getState().toggleAddonProtection(accountId, addon.transportUrl, !addon.flags?.protected, index)
   }
 
   const confirmUnprotectCinemeta = () => {
-    useAccountStore.getState().toggleAddonProtection(accountId, addon.transportUrl, false)
+    useAccountStore.getState().toggleAddonProtection(accountId, addon.transportUrl, false, index)
     setShowUnprotectConfirmation(false)
   }
 
@@ -418,11 +429,14 @@ export function AddonCard({
     const currentAddons = await stremioClient.getAddonCollection(decryptedAuthKey)
 
     // Find and replace the addon we're editing
-    const updatedAddons = currentAddons.map((a) =>
-      a.transportUrl === addon.transportUrl
-        ? updatedAddon
-        : a
-    )
+    const updatedAddons = currentAddons.map((a, i) => {
+      // If index is available, use it for strict matching. Fallback to URL.
+      const isTarget = typeof index === 'number'
+        ? i === index
+        : a.transportUrl === addon.transportUrl
+
+      return isTarget ? updatedAddon : a
+    })
 
     // Sync back to Stremio
     await stremioClient.setAddonCollection(decryptedAuthKey, updatedAddons)
@@ -433,7 +447,21 @@ export function AddonCard({
 
   return (
     <>
-      <Card className={`flex flex-col h-full transition-all duration-300 ${addon.flags?.enabled === false ? 'opacity-60 grayscale-[0.8] border-dashed' : ''}`}>
+      <Card
+        className={`flex flex-col h-full transition-all duration-300 relative ${addon.flags?.enabled === false ? 'opacity-60 grayscale-[0.8] border-dashed' : ''
+          } ${isSelectionMode && isSelected
+            ? 'ring-2 ring-primary border-primary bg-primary/5'
+            : isSelectionMode
+              ? 'cursor-pointer hover:border-primary/50'
+              : ''
+          }`}
+        onClick={(e) => {
+          if (isSelectionMode && onToggleSelect) {
+            e.preventDefault()
+            onToggleSelect(selectionId || addon.transportUrl)
+          }
+        }}
+      >
         <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
           <div className="flex items-center gap-3 min-w-0">
             {(addon.metadata?.customLogo || addon.manifest.logo) && (
@@ -488,7 +516,7 @@ export function AddonCard({
             <div className="flex items-center gap-2 mr-2">
               <Switch
                 checked={addon.flags?.enabled !== false}
-                onCheckedChange={(checked) => useAccountStore.getState().toggleAddonEnabled(accountId, addon.transportUrl, checked)}
+                onCheckedChange={(checked) => useAccountStore.getState().toggleAddonEnabled(accountId, addon.transportUrl, checked, false, index)}
                 className="data-[state=checked]:bg-green-500"
                 aria-label="Toggle Addon"
               />

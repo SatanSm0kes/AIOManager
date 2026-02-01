@@ -113,6 +113,7 @@ interface AccountStore {
   syncAllAccounts: () => Promise<void>
   installAddonToAccount: (accountId: string, addonUrl: string) => Promise<void>
   removeAddonFromAccount: (accountId: string, transportUrl: string) => Promise<void>
+  removeAddonByIndexFromAccount: (accountId: string, index: number) => Promise<void>
   reorderAddons: (accountId: string, newOrder: AddonDescriptor[]) => Promise<void>
   exportAccounts: (includeCredentials: boolean) => Promise<string>
   importAccounts: (json: string, isSilent?: boolean) => Promise<void>
@@ -120,12 +121,13 @@ interface AccountStore {
     id: string,
     data: { name: string; authKey?: string; email?: string; password?: string }
   ) => Promise<void>
-  toggleAddonProtection: (accountId: string, transportUrl: string, isProtected: boolean) => Promise<void>
-  toggleAddonEnabled: (accountId: string, transportUrl: string, isEnabled: boolean, silent?: boolean) => Promise<void>
-  updateAddonMetadata: (accountId: string, transportUrl: string, metadata: { customName?: string; customLogo?: string; customDescription?: string }) => Promise<void>
+  toggleAddonProtection: (accountId: string, transportUrl: string, isProtected: boolean, targetIndex?: number) => Promise<void>
+  toggleAddonEnabled: (accountId: string, transportUrl: string, isEnabled: boolean, silent?: boolean, targetIndex?: number) => Promise<void>
+  updateAddonMetadata: (accountId: string, transportUrl: string, metadata: { customName?: string; customLogo?: string; customDescription?: string }, targetIndex?: number) => Promise<void>
   moveAccount: (id: string, direction: 'up' | 'down') => Promise<void>
   reorderAccounts: (newOrder: string[]) => Promise<void>
   bulkProtectAddons: (accountId: string, isProtected: boolean) => Promise<void>
+  removeLocalAddons: (accountId: string, transportUrls: string[]) => Promise<void>
   clearError: () => void
   reset: () => Promise<void>
 }
@@ -496,7 +498,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         ...addon,
         manifest: sanitizeAddonManifest(addon.manifest),
       }))
-      const mergedOrder = mergeAddons(account.addons, normalizedAddons)
+
+      // Filter out the removed addon from LOCAL state before merging
+      // This ensures that if it was "disabled" (and thus kept by mergeAddons), it is now explicitly dropped.
+      const localAddonsFiltered = account.addons.filter(a => a.transportUrl !== transportUrl)
+
+      const mergedOrder = mergeAddons(localAddonsFiltered, normalizedAddons)
 
       const updatedAccount = {
         ...account,
@@ -508,6 +515,49 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to remove addon'
+      set({ error: message })
+      throw error
+    } finally {
+      set({ loading: false })
+    }
+  },
+
+  removeAddonByIndexFromAccount: async (accountId, index) => {
+    set({ loading: true, error: null })
+    try {
+      const account = get().accounts.find((acc) => acc.id === accountId)
+      if (!account) {
+        throw new Error('Account not found')
+      }
+
+      // Check if addon is protected before removing
+      const addonToRemove = account.addons[index]
+      if (!addonToRemove) throw new Error('Addon not found at index')
+
+      if (addonToRemove.flags?.protected) {
+        throw new Error(`Addon "${addonToRemove.manifest.name}" is protected and cannot be removed.`)
+      }
+
+      // 1. Remove ONLY the item at the specific index (order-safe for duplicates)
+      const updatedAddons = [...account.addons]
+      updatedAddons.splice(index, 1)
+
+      // 2. Local Update
+      const updatedAccount = {
+        ...account,
+        addons: updatedAddons,
+        lastSync: new Date(),
+      }
+      const accounts = get().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
+      set({ accounts })
+      await localforage.setItem(STORAGE_KEY, accounts)
+
+      // 3. Remote Sync (Push the entire collection to preserve order)
+      const authKey = await decrypt(account.authKey, getEncryptionKey())
+      await updateAddons(authKey, updatedAddons)
+
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to remove addon'
       set({ error: message })
@@ -970,13 +1020,18 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     }
   },
 
-  toggleAddonProtection: async (accountId, transportUrl, isProtected) => {
+  toggleAddonProtection: async (accountId, transportUrl, isProtected, targetIndex) => {
     try {
       const account = get().accounts.find((acc) => acc.id === accountId)
       if (!account) return
 
-      const updatedAddons = account.addons.map(addon => {
-        if (addon.transportUrl === transportUrl) {
+      const updatedAddons = account.addons.map((addon, index) => {
+        // If targetIndex provided, strict match. Otherwise, match all by URL.
+        const shouldUpdate = typeof targetIndex === 'number'
+          ? index === targetIndex
+          : addon.transportUrl === transportUrl
+
+        if (shouldUpdate) {
           return {
             ...addon,
             flags: {
@@ -1010,14 +1065,19 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     }
   },
 
-  toggleAddonEnabled: async (accountId, transportUrl, isEnabled, silent = false) => {
+  toggleAddonEnabled: async (accountId, transportUrl, isEnabled, silent = false, targetIndex) => {
     try {
       if (!silent) set({ loading: true, error: null })
       const account = get().accounts.find((acc) => acc.id === accountId)
       if (!account) return
 
-      const updatedAddons = account.addons.map((addon) => {
-        if (addon.transportUrl === transportUrl) {
+      const updatedAddons = account.addons.map((addon, index) => {
+        // If targetIndex provided, strict match. Otherwise, match all by URL.
+        const shouldUpdate = typeof targetIndex === 'number'
+          ? index === targetIndex
+          : addon.transportUrl === transportUrl
+
+        if (shouldUpdate) {
           return {
             ...addon,
             flags: {
@@ -1068,14 +1128,19 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     }
   },
 
-  updateAddonMetadata: async (accountId, transportUrl, metadata) => {
+  updateAddonMetadata: async (accountId, transportUrl, metadata, targetIndex) => {
     try {
       set({ loading: true, error: null })
       const account = get().accounts.find((acc) => acc.id === accountId)
       if (!account) throw new Error('Account not found')
 
-      const updatedAddons = account.addons.map((addon) => {
-        if (addon.transportUrl === transportUrl) {
+      const updatedAddons = account.addons.map((addon, index) => {
+        // If targetIndex provided, strict match. Otherwise, match all by URL.
+        const shouldUpdate = typeof targetIndex === 'number'
+          ? index === targetIndex
+          : addon.transportUrl === transportUrl
+
+        if (shouldUpdate) {
           return {
             ...addon,
             metadata: {
@@ -1138,6 +1203,22 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         title: 'Protection Sync Failed',
         description: message
       })
+    }
+  },
+
+  removeLocalAddons: async (accountId, transportUrls) => {
+    // Helper to explicitly remove addons from local state (used for deleting disabled/ghost addons)
+    const account = get().accounts.find((acc) => acc.id === accountId)
+    if (!account) return
+
+    const updatedAddons = account.addons.filter(a => !transportUrls.includes(a.transportUrl))
+
+    // Only update if changes were made
+    if (updatedAddons.length !== account.addons.length) {
+      const updatedAccount = { ...account, addons: updatedAddons }
+      const accounts = get().accounts.map(acc => acc.id === accountId ? updatedAccount : acc)
+      set({ accounts })
+      await localforage.setItem(STORAGE_KEY, accounts)
     }
   },
 
