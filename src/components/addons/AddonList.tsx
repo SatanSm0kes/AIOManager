@@ -61,9 +61,18 @@ export function AddonList({ accountId }: AddonListProps) {
   }
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [protectedInSelection, setProtectedInSelection] = useState(0)
 
   const handleBulkDeleteClick = () => {
     if (selectedAddonUrls.size === 0) return
+
+    // Count how many protected addons are selected
+    const protectedCount = addons.filter((addon, index) => {
+      const compositeId = `${addon.transportUrl}::${index}`
+      return selectedAddonUrls.has(compositeId) && addon.flags?.protected
+    }).length
+
+    setProtectedInSelection(protectedCount)
     setShowDeleteConfirm(true)
   }
 
@@ -474,7 +483,16 @@ export function AddonList({ accountId }: AddonListProps) {
         open={showDeleteConfirm}
         onOpenChange={setShowDeleteConfirm}
         title={`Delete ${selectedAddonUrls.size} Addons?`}
-        description={`Are you sure you want to delete ${selectedAddonUrls.size} selected addons? This action cannot be undone.`}
+        description={
+          <>
+            Are you sure you want to delete {selectedAddonUrls.size} selected addons? This action cannot be undone.
+            {protectedInSelection > 0 && (
+              <p className="mt-2 p-2 bg-destructive/10 text-destructive text-xs rounded border border-destructive/20 font-medium">
+                Note: This includes {protectedInSelection} protected addon{protectedInSelection !== 1 ? 's' : ''}.
+              </p>
+            )}
+          </>
+        }
         confirmText="Delete Addons"
         isDestructive={true}
         onConfirm={handleBulkDeleteConfirm}
