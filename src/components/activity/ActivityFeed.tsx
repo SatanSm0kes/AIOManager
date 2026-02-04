@@ -127,47 +127,55 @@ export function ActivityFeed({
                                                 loading="lazy"
                                             />
 
-                                            {/* Top Left: Title & Time */}
-                                            <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-10">
-                                                <Badge className="bg-black/60 text-white backdrop-blur-md border-0 shadow-lg px-2 py-0.5 text-[10px] font-black leading-tight max-w-[120px]">
-                                                    <span className="truncate">{item.name}</span>
-                                                </Badge>
-                                                {!isLive && (
-                                                    <Badge className="bg-black/60 text-white/80 backdrop-blur-md border-0 px-2 py-0.5 text-[9px] font-bold shadow-lg">
-                                                        {formatDistanceToNow(itemDate, { addSuffix: true })}
-                                                    </Badge>
-                                                )}
-                                            </div>
+                                            {/* Gradient overlay for readability */}
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
 
-                                            {/* Top Right: User & Remaining */}
-                                            <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-10">
-                                                <Badge variant="secondary" className="bg-black/60 hover:bg-black/80 text-white backdrop-blur-md border-0 shadow-lg flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold">
-                                                    <Avatar className="h-3 w-3 border border-white/20">
-                                                        <AvatarFallback className="bg-primary/20 text-[6px] text-white my-auto">
-                                                            {userName[0]?.toUpperCase()}
-                                                        </AvatarFallback>
-                                                    </Avatar>
-                                                    <span className="truncate max-w-[60px]">{userName}</span>
-                                                </Badge>
+                                            {/* Bottom Layout: Left stack + Right user/time */}
+                                            <div className="absolute bottom-0 left-0 right-0 p-2.5 flex items-end justify-between gap-2 z-10">
+                                                {/* Left Stack: Title, Season/Ep, Timestamp */}
+                                                <div className="flex flex-col gap-1 items-start min-w-0 flex-1">
+                                                    <div className="bg-black/60 backdrop-blur-sm rounded px-1.5 py-1 max-w-full">
+                                                        <h3 className="font-black text-[11px] text-white leading-tight line-clamp-2">
+                                                            {item.name}
+                                                        </h3>
+                                                        {(item.type === 'series' || item.type === 'anime') && item.episode !== undefined && (
+                                                            <span className="text-[10px] text-primary font-bold block mt-0.5">
+                                                                S{item.season ?? 1} E{item.episode}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {!isLive && (
+                                                        <span className="text-[9px] text-white/80 font-semibold bg-black/50 backdrop-blur-sm rounded px-1.5 py-0.5">
+                                                            {formatDistanceToNow(itemDate, { addSuffix: true })}
+                                                        </span>
+                                                    )}
+                                                </div>
 
-                                                {remainingMinutes > 0 && !isLive && (
-                                                    <Badge className="bg-black/60 text-white backdrop-blur-md border-0 px-2 py-0.5 text-[9px] font-black shadow-lg">
-                                                        {remainingMinutes}M LEFT
-                                                    </Badge>
-                                                )}
-                                            </div>
-
-                                            {/* Bottom: Watching Now Overlay */}
-                                            {isLive && (
-                                                <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-green-500/80 to-transparent flex justify-center">
-                                                    <Badge className="bg-white text-green-600 border-0 shadow-xl animate-pulse flex items-center gap-1.5 px-3 py-1 text-[10px] font-black uppercase tracking-widest">
-                                                        <Activity className="h-3 w-3" /> Watching Now
+                                                {/* Right: User + Time Left */}
+                                                <div className="flex flex-col gap-1 items-end shrink-0">
+                                                    <Badge variant="secondary" className="bg-black/60 hover:bg-black/70 text-white backdrop-blur-sm border-0 shadow-lg flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold">
+                                                        <Avatar className="h-3 w-3 border border-white/20">
+                                                            <AvatarFallback className="bg-primary/40 text-[6px] text-white">
+                                                                {userName[0]?.toUpperCase()}
+                                                            </AvatarFallback>
+                                                        </Avatar>
+                                                        <span className="truncate max-w-[50px]">{userName}</span>
+                                                        {remainingMinutes > 0 && !isLive && (
+                                                            <span className="text-primary font-black ml-0.5">
+                                                                • {remainingMinutes}M
+                                                            </span>
+                                                        )}
                                                     </Badge>
                                                 </div>
-                                            )}
+                                            </div>
 
-                                            {!isLive && (
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            {/* Live: Watching Now Overlay */}
+                                            {isLive && (
+                                                <div className="absolute top-2 right-2 z-20">
+                                                    <Badge className="bg-green-500 text-white border-0 shadow-xl animate-pulse flex items-center gap-1 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide">
+                                                        <Activity className="h-2.5 w-2.5" /> NOW
+                                                    </Badge>
+                                                </div>
                                             )}
                                         </div>
                                     )

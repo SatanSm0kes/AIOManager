@@ -17,6 +17,7 @@ export function LoginPage() {
     // State
     const [mode, setMode] = useState<'login' | 'register'>('login')
     const [showPassword, setShowPassword] = useState(false)
+    const [customHtml, setCustomHtml] = useState<string | null>(null)
 
     // Login Fields
     const [loginId, setLoginId] = useState('')
@@ -33,8 +34,17 @@ export function LoginPage() {
 
     const passwordsMatch = regPass === regPassConfirm || !regPassConfirm
 
-    // Auto-fill ID from URL
+    // Fetch custom HTML from server config
+    useEffect(() => {
+        fetch('/api/config')
+            .then(res => res.json())
+            .then(data => {
+                if (data.customHtml) setCustomHtml(data.customHtml)
+            })
+            .catch(() => { /* Silently fail - optional feature */ })
+    }, [])
 
+    // Auto-fill ID from URL
     useEffect(() => {
         const idParam = searchParams.get('id')
         if (idParam) {
@@ -89,6 +99,14 @@ export function LoginPage() {
     return (
         <div className="min-h-screen flex items-center justify-center bg-background p-4 animate-in fade-in zoom-in-95 duration-300">
             <div className="max-w-md w-full space-y-8">
+                {/* Custom HTML Injection (for hosted deployments) */}
+                {customHtml && (
+                    <div
+                        className="custom-html-container"
+                        dangerouslySetInnerHTML={{ __html: customHtml }}
+                    />
+                )}
+
                 {/* Branding */}
                 <div className="text-center space-y-2">
                     <div className="flex justify-center mb-6">

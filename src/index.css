@@ -162,3 +162,12 @@
   }
 }
 
+.custom-html-container {
+  width: 100%;
+  margin-bottom: 1.5rem;
+}
+
+.custom-html-container * {
+  max-width: 100%;
+}
+

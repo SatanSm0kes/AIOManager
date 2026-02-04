@@ -35,3 +35,17 @@ export function getStremioLink(url: string): string {
 export function getAddonConfigureUrl(installUrl: string): string {
   return installUrl.replace('manifest.json', 'configure')
 }
+
+/**
+ * Normalizes an addon URL for consistent comparison.
+ * Handles stremio:// protocols, trailing slashes, and manifest.json suffixes.
+ * Note: Case is NOT forced here to preserve Base64 tokens; callers should .toLowerCase() if needed.
+ */
+export function normalizeAddonUrl(url: string): string {
+  if (!url) return ''
+  let normalized = url.trim()
+  normalized = normalized.replace(/^stremio:\/\//i, 'https://')
+  normalized = normalized.replace(/\/manifest\.json$/i, '')
+  normalized = normalized.replace(/\/+$/, '')
+  return normalized
+}

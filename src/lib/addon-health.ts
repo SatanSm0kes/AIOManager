@@ -7,43 +7,58 @@ import { SavedAddon } from '@/types/saved-addon'
  * @returns true if online (200 response), false otherwise
  */
 export async function checkAddonHealth(addonUrl: string): Promise<boolean> {
-  const manifestUrl = addonUrl.endsWith('/manifest.json') ? addonUrl : `${addonUrl}/manifest.json`
+  let domain = addonUrl;
+  try { domain = new URL(addonUrl).origin } catch (e) { }
 
-  // 1. Try direct fetch first (fastest, works for CORS-enabled addons)
+  const performCheck = async (target: string, timeoutMs: number) => {
+    try {
+      const controller = new AbortController()
+      const id = setTimeout(() => controller.abort(), timeoutMs)
+
+      // Priority 1: HEAD
+      const response = await fetch(target, {
+        method: 'HEAD',
+        signal: controller.signal,
+        cache: 'no-cache'
+      })
+
+      if (response.ok || response.status === 405) {
+        clearTimeout(id)
+        return true
+      }
+
+      // Priority 2: GET
+      const response2 = await fetch(target, {
+        method: 'GET',
+        signal: controller.signal,
+        cache: 'no-cache'
+      })
+
+      clearTimeout(id)
+      return response2.ok
+    } catch (error) {
+      return false
+    }
+  }
+
+  // 1. Silent Domain-Only Check (Anti-Flood)
+  if (await performCheck(domain, 15000)) {
+    return true
+  }
+
+  // 2. Definitive Manifest Check (Fallback)
+  // Ensures we don't have false positives if the domain root is blocked.
+  const manifestUrl = addonUrl.endsWith('/manifest.json') ? addonUrl : `${addonUrl}/manifest.json`
+  if (await performCheck(manifestUrl, 15000)) {
+    return true
+  }
+
+  // 3. Final Proxy Fallback (AllOrigins) - Last resort
   try {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(domain)}`
     const controller = new AbortController()
     const id = setTimeout(() => controller.abort(), 10000)
 
-    const response = await fetch(manifestUrl, {
-      method: 'GET',
-      signal: controller.signal,
-      cache: 'no-cache',
-      headers: {
-        'Accept': 'application/json'
-      }
-    })
-
-    clearTimeout(id)
-    if (response.ok) {
-      // Validate content is JSON
-      try {
-        await response.json()
-        return true
-      } catch (e) {
-        // Not JSON, likely an error page
-        return false
-      }
-    }
-  } catch (error) {
-    // Continue to proxy
-  }
-
-  // 2. Fallback to CORS proxy (AllOrigins)
-  try {
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(manifestUrl)}`
-    const controller = new AbortController()
-    const id = setTimeout(() => controller.abort(), 8000)
-
     const response = await fetch(proxyUrl, {
       method: 'GET',
       signal: controller.signal,
@@ -51,40 +66,10 @@ export async function checkAddonHealth(addonUrl: string): Promise<boolean> {
     })
 
     clearTimeout(id)
-    if (response.ok) {
-      try {
-        await response.json()
-        return true
-      } catch (e) {
-        return false
-      }
-    }
-  } catch (err) {
-    // Continue to next proxy
-  }
-
-  // 3. Fallback to CORSProxy.io (Backup)
-  try {
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(manifestUrl)}`
-    const controller = new AbortController()
-    const id = setTimeout(() => controller.abort(), 8000)
-
-    const response = await fetch(proxyUrl, {
-      method: 'GET',
-      signal: controller.signal,
-      cache: 'no-cache'
-    })
-
-    clearTimeout(id)
-    if (response.ok) {
-      await response.json()
-      return true
-    }
+    return response.ok
   } catch (err) {
     return false
   }
-
-  return false
 }
 
 /**

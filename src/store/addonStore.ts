@@ -1062,7 +1062,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
             const sourceRules = failoverStore.rules.filter(r => r.accountId === sourceAccount.id)
             for (const rule of sourceRules) {
               // Create a fresh copy with target accountId and new UUID
-              await failoverStore.addRule(accountId, [...rule.priorityChain])
+              await failoverStore.addRule(accountId, [...(rule.priorityChain || [])])
             }
           }
 

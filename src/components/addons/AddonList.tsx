@@ -11,7 +11,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { ArrowLeft, GripVertical, Library, RefreshCw, Save, Plus, ShieldCheck } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AddonCard } from './AddonCard'
 import { AddonReorderDialog } from './AddonReorderDialog'
@@ -31,7 +31,10 @@ export function AddonList({ accountId }: AddonListProps) {
   const account = accounts.find((acc) => acc.id === accountId)
   const { addons, removeAddonByIndex, loading } = useAddons(accountId)
   const openAddAddonDialog = useUIStore((state) => state.openAddAddonDialog)
-  const checkRules = useFailoverStore((state) => state.checkRules)
+  const { checkRules, pullServerState } = useFailoverStore()
+  const encryptionKey = useAuthStore((state) => state.encryptionKey)
+  const syncAccount = useAccountStore((state) => state.syncAccount)
+
   const [reorderDialogOpen, setReorderDialogOpen] = useState(false)
   const [installFromLibraryOpen, setInstallFromLibraryOpen] = useState(false)
 
@@ -59,6 +62,15 @@ export function AddonList({ accountId }: AddonListProps) {
       setSelectedAddonUrls(new Set())
     }
   }
+
+  // Auto-sync on mount to reflect server-side Autopilot swaps
+  useEffect(() => {
+    if (accountId && encryptionKey) {
+      syncAccount(accountId, false).then(() => {
+        pullServerState()
+      })
+    }
+  }, [accountId, syncAccount, pullServerState, encryptionKey])
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [protectedInSelection, setProtectedInSelection] = useState(0)
@@ -108,8 +120,6 @@ export function AddonList({ accountId }: AddonListProps) {
   const latestVersions = useAddonStore((state) => state.latestVersions)
   const updateLatestVersions = useAccountStore((state) => state.updateLatestVersions)
   const [updatingAll, setUpdatingAll] = useState(false)
-  const encryptionKey = useAuthStore((state) => state.encryptionKey)
-  const syncAccount = useAccountStore((state) => state.syncAccount)
   const { toast } = useToast()
 
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
@@ -127,7 +137,8 @@ export function AddonList({ accountId }: AddonListProps) {
       // First sync account to get the latest addons from the server
       await syncAccount(accountId)
 
-      // Trigger failover check immediately
+      // Sync with server-side autopilot state and local health
+      await pullServerState()
       await checkRules()
 
       const updateInfoList = await checkAddonUpdates(addons, accountId)

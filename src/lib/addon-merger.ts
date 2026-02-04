@@ -1,6 +1,7 @@
 import { AddonDescriptor } from '@/types/addon'
 import { SavedAddon, MergeResult } from '@/types/saved-addon'
 import { fetchAddonManifest } from '@/api/addons'
+import { normalizeAddonUrl } from './utils'
 
 /**
  * Addon Merger
@@ -34,11 +35,13 @@ export async function mergeAddons(
     const addonId = savedAddon.manifest.id
     const installUrl = savedAddon.installUrl
 
-    // 1. Smart Swap: Check for same Addon ID OR literal same-URL 
-    // This prevents duplicates if the URL changed but it's the same addon
-    const existingIndex = updatedAddons.findIndex((a) =>
-      a.manifest.id === addonId || a.transportUrl === installUrl
-    )
+    // 1. Smart Swap: Check for same Addon ID OR normalized same-URL 
+    // This prevents duplicates if the URL protocol/trailing-slash changed
+    const normInstallUrl = normalizeAddonUrl(installUrl).toLowerCase()
+    const existingIndex = updatedAddons.findIndex((a) => {
+      const normA = normalizeAddonUrl(a.transportUrl).toLowerCase()
+      return a.manifest.id === addonId || normA === normInstallUrl
+    })
 
     if (existingIndex >= 0) {
       const existing = updatedAddons[existingIndex]
@@ -147,7 +150,11 @@ export function removeAddons(
 
   const updatedAddons = currentAddons.filter((addon) => {
     // Check if the addon's ID OR its transport URL is in the removal list
-    const shouldRemove = idsOrUrls.includes(addon.manifest.id) || idsOrUrls.includes(addon.transportUrl)
+    const normA = normalizeAddonUrl(addon.transportUrl).toLowerCase()
+    const shouldRemove = idsOrUrls.some(target => {
+      const normTarget = normalizeAddonUrl(target).toLowerCase()
+      return addon.manifest.id === target || normA === normTarget
+    })
 
     if (shouldRemove) {
       // Don't remove protected addons
@@ -184,19 +191,5 @@ export async function previewMerge(
  * (normalize and compare)
  */
 export function areUrlsEquivalent(url1: string, url2: string): boolean {
-  const normalize = (url: string) => {
-    try {
-      const parsed = new URL(url)
-      const params = new URLSearchParams(parsed.search)
-      const sortedParams = new URLSearchParams(
-        Array.from(params.entries()).sort(([a], [b]) => a.localeCompare(b))
-      )
-      parsed.search = sortedParams.toString()
-      return parsed.toString().toLowerCase().replace(/\/$/, '')
-    } catch {
-      return url.toLowerCase().replace(/\/$/, '')
-    }
-  }
-
-  return normalize(url1) === normalize(url2)
+  return normalizeAddonUrl(url1).toLowerCase() === normalizeAddonUrl(url2).toLowerCase()
 }

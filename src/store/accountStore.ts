@@ -12,6 +12,7 @@ import { accountExportSchema } from '@/lib/validation'
 import { loadAddonLibrary, saveAddonLibrary } from '@/lib/addon-storage'
 import { updateLatestVersions as updateLatestVersionsCoordinator } from '@/lib/store-coordinator'
 import { toast } from '@/hooks/use-toast'
+import { normalizeAddonUrl } from '@/lib/utils'
 import { AccountExport, StremioAccount, FailoverRuleExport } from '@/types/account'
 import { useProfileStore } from '@/store/profileStore'
 import { AddonDescriptor } from '@/types/addon'
@@ -61,40 +62,56 @@ const getEncryptionKey = () => {
 
 // Helper: Merge remote addons with local addons, preserving order and flags
 const mergeAddons = (localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[]) => {
-  // 1. Map remote addons for lookup (by transportUrl to support duplicates)
-  const remoteAddonMap = new Map(remoteAddons.map(a => [a.transportUrl, a]))
-  const processedRemoteUrls = new Set<string>()
+  // 1. Map remote addons for lookup (by normalized URL)
+  const remoteAddonMap = new Map()
+  remoteAddons.forEach(a => {
+    const norm = normalizeAddonUrl(a.transportUrl).toLowerCase()
+    if (!remoteAddonMap.has(norm)) remoteAddonMap.set(norm, a)
+  })
+
+  const processedRemoteNormUrls = new Set<string>()
   const finalAddons: AddonDescriptor[] = []
 
   // 2. Iterate through LOCAL addons to preserve their order
   localAddons.forEach(localAddon => {
-    const remoteAddon = remoteAddonMap.get(localAddon.transportUrl)
+    const normLocal = normalizeAddonUrl(localAddon.transportUrl).toLowerCase()
+    const remoteAddon = remoteAddonMap.get(normLocal)
 
     if (remoteAddon) {
       // Exists in both: Use Remote data + Local flags
+      // CRITICAL: If it exists in remote, it IS currently active/enabled in Stremio.
+      // We trust the remote state here to reflect Autopilot swaps in the UI.
       finalAddons.push({
         ...remoteAddon,
         flags: {
           ...remoteAddon.flags,
           protected: localAddon.flags?.protected,
-          enabled: localAddon.flags?.enabled ?? true
+          enabled: true // Trust remote presence
         },
         metadata: localAddon.metadata
       })
-      processedRemoteUrls.add(localAddon.transportUrl)
+      processedRemoteNormUrls.add(normLocal)
     } else {
-      // Missing from remote
-      // Keep ONLY if it is explicitly disabled locally or protected
-      if (localAddon.flags?.enabled === false || localAddon.flags?.protected) {
-        finalAddons.push(localAddon)
+      // Catch-all preservation: Keep ONLY if it is explicitly disabled locally, protected, 
+      // or has custom metadata (managed/customized addon)
+      const hasMetadata = localAddon.metadata && (localAddon.metadata.customName || localAddon.metadata.customLogo || localAddon.metadata.customDescription)
+      if (localAddon.flags?.enabled === false || localAddon.flags?.protected || hasMetadata) {
+        finalAddons.push({
+          ...localAddon,
+          flags: { ...(localAddon.flags || {}), enabled: false } // If not in remote, it's disabled
+        })
       }
     }
   })
 
   // 3. Append any NEW remote addons that weren't in local list
   remoteAddons.forEach(remoteAddon => {
-    if (!processedRemoteUrls.has(remoteAddon.transportUrl)) {
-      finalAddons.push(remoteAddon)
+    const normRemote = normalizeAddonUrl(remoteAddon.transportUrl).toLowerCase()
+    if (!processedRemoteNormUrls.has(normRemote)) {
+      finalAddons.push({
+        ...remoteAddon,
+        flags: { ...(remoteAddon.flags || {}), enabled: true }
+      })
     }
   })
 
@@ -548,6 +565,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
 
+      toast({ title: 'Addon Removed', description: 'Addon removed successfully.' })
+
       // 3. Remote Sync (Push the entire collection to preserve order)
       const authKey = await decrypt(account.authKey, getEncryptionKey())
       await updateAddons(authKey, updatedAddons, account.id)
@@ -582,6 +601,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
+
+      toast({ title: 'Addons Reordered', description: 'Addon order updated successfully.' })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to reorder addons'
       set({ error: message })
@@ -949,7 +970,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       }
 
       // BACKGROUND SYNC: Populate manifests for imported accounts
-      // Since imported accounts might have empty manifests, we trigger 
+      // Since imported accounts might have empty manifests, we trigger
       // syncAllAccounts to baseline them using the Recovery logic.
       get().syncAllAccounts().catch(e => console.error('[Import] Auto-sync failed:', e))
 
@@ -1005,6 +1026,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
+
+      toast({ title: 'Account Updated', description: 'Account details updated successfully.' })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update account'
       set({ error: message })
@@ -1043,6 +1066,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
+
+      toast({ title: 'Protection Toggled', description: 'Addon protection status updated.' })
 
       // Sync to server to ensure API checks pass
       const authKey = await decrypt(account.authKey, getEncryptionKey())
@@ -1090,12 +1115,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
 
-      // Sync to server if unlocked
-      try {
-        const authKey = await decrypt(account.authKey, getEncryptionKey())
-        await updateAddons(authKey, updatedAddons, accountId)
-      } catch (e) {
-        console.warn('Could not sync enabled state to remote (likely locked)', e)
+      // Sync to server if unlocked AND not silent (background sync)
+      if (!silent) {
+        try {
+          const authKey = await decrypt(account.authKey, getEncryptionKey())
+          await updateAddons(authKey, updatedAddons, accountId)
+        } catch (e) {
+          console.warn('Could not sync enabled state to remote (likely locked)', e)
+        }
       }
 
       if (!silent) {
@@ -1178,6 +1205,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
 
+      toast({ title: 'Metadata Updated', description: 'Addon metadata updated successfully.' })
+
       // CRITICAL: Push to Stremio (Raven Method)
       const authKey = await decrypt(account.authKey, getEncryptionKey())
       await updateAddons(authKey, updatedAddons, accountId)
@@ -1209,6 +1238,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
+
+      toast({ title: 'Bulk Protection Updated', description: 'Addon protection status updated for all addons.' })
 
       // Sync to server
       const authKey = await decrypt(account.authKey, getEncryptionKey())

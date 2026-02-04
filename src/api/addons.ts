@@ -7,10 +7,11 @@ export async function getAddons(authKey: string, accountContext: string = 'Unkno
 }
 
 export async function updateAddons(authKey: string, addons: AddonDescriptor[], accountContext: string = 'Unknown'): Promise<void> {
-  // CRITICAL: Filter out disabled addons and apply manifest customizations (Raven fix)
+  // CRITICAL: Apply manifest customizations (Raven fix)
   // This ensures that custom names, logos, and descriptions are pushed to Stremio.
+  // We FILTER OUT disabled addons here so they are "hidden" in Stremio.
   const preparedAddons = (addons || [])
-    .filter((addon) => addon.flags?.enabled !== false)
+    .filter(addon => addon.flags?.enabled !== false)
     .map((addon) => {
       // CRITICAL: Always ensure types and resources are present
       const baseManifest = {
@@ -35,6 +36,7 @@ export async function updateAddons(authKey: string, addons: AddonDescriptor[], a
 
   return stremioClient.setAddonCollection(authKey, preparedAddons, accountContext)
 }
+
 
 export async function installAddon(authKey: string, addonUrl: string, accountContext: string = 'Unknown'): Promise<AddonDescriptor[]> {
   // First, fetch the addon manifest
@@ -177,8 +179,6 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
 
   console.log(`[Update Check] Checking ${checkableAddons.length} addons in batches with robust domain caching...`)
 
-  console.log(`[Update Check] Checking ${checkableAddons.length} addons in batches with robust domain caching...`)
-
   const results: AddonUpdateInfo[] = []
   const domainHealthCache: Record<string, boolean> = {}
   const batchSize = 10
@@ -202,24 +202,24 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
             return await PENDING_CHECKS[origin]
           })()
 
-        const manifestPromise = (async () => {
-          // Wait for health check before fetching manifest to save proxy bandwidth
-          const isOnline = await healthPromise
-          if (!isOnline) throw new Error('Addon is offline')
+        const manifestKey = addon.transportUrl // Key by full URL to avoid version collisions (Issue #1)
+        if (!PENDING_MANIFESTS[manifestKey]) {
+          PENDING_MANIFESTS[manifestKey] = (async () => {
+            // Wait for health check before fetching manifest to save proxy bandwidth
+            const isOnlineVal = await healthPromise
+            if (!isOnlineVal) throw new Error('Addon is offline')
 
-          if (!PENDING_MANIFESTS[origin]) {
-            PENDING_MANIFESTS[origin] = stremioClient.fetchAddonManifest(addon.transportUrl, accountContext).catch(err => {
-              delete PENDING_MANIFESTS[origin]
-              throw err
-            })
-            // Manifest cache for 5s to sync burst requests
-            setTimeout(() => delete PENDING_MANIFESTS[origin], 5000)
-          }
-          return await PENDING_MANIFESTS[origin]
-        })()
+            return stremioClient.fetchAddonManifest(addon.transportUrl, accountContext)
+          })().catch(err => {
+            delete PENDING_MANIFESTS[manifestKey]
+            throw err
+          })
+          // Manifest cache for 5s to sync burst requests
+          setTimeout(() => delete PENDING_MANIFESTS[manifestKey], 5000)
+        }
 
         const [latestManifest, isOnline] = await Promise.all([
-          manifestPromise,
+          PENDING_MANIFESTS[manifestKey],
           healthPromise,
         ])
 
@@ -285,26 +285,25 @@ export async function checkSavedAddonUpdates(
             return await PENDING_CHECKS[origin]
           })()
 
-        const manifestResult = await (async () => {
-          // Wait for health check before fetching manifest to save proxy bandwidth
-          const isOnline = await healthPromise
-          if (!isOnline) throw new Error('Addon is offline')
+        const manifestKey = addon.installUrl // Key by full URL to avoid version collisions
+        if (!PENDING_MANIFESTS[manifestKey]) {
+          PENDING_MANIFESTS[manifestKey] = (async () => {
+            // Wait for health check before fetching manifest to save proxy bandwidth
+            const isOnlineVal = await healthPromise
+            if (!isOnlineVal) throw new Error('Addon is offline')
 
-          if (!PENDING_MANIFESTS[origin]) {
-            PENDING_MANIFESTS[origin] = stremioClient.fetchAddonManifest(addon.installUrl, accountContext).catch(async (err) => {
-              delete PENDING_MANIFESTS[origin]
-              throw err
-            })
-            setTimeout(() => delete PENDING_MANIFESTS[origin], 5000)
-          }
-          return await PENDING_MANIFESTS[origin]
-        })()
+            return stremioClient.fetchAddonManifest(addon.installUrl, accountContext)
+          })().catch(async (err) => {
+            delete PENDING_MANIFESTS[manifestKey]
+            throw err
+          })
+          setTimeout(() => delete PENDING_MANIFESTS[manifestKey], 5000)
+        }
 
-        const [isOnline] = await Promise.all([
+        const [latestManifest, isOnline] = await Promise.all([
+          PENDING_MANIFESTS[manifestKey],
           healthPromise,
         ])
-
-        const latestManifest = manifestResult
 
         const hasUpdate = latestManifest.manifest.version !== addon.manifest.version
 

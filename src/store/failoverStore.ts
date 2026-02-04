@@ -6,6 +6,7 @@ import { toast } from '@/hooks/use-toast'
 import { useHistoryStore } from '@/store/historyStore'
 import axios from 'axios'
 import { decrypt, loadSessionKey } from '@/lib/crypto'
+import { normalizeAddonUrl } from '@/lib/utils'
 
 const STORAGE_KEY = 'stremio-manager:failover-rules'
 
@@ -45,6 +46,7 @@ interface FailoverStore {
     removeRule: (ruleId: string) => Promise<void>
     toggleRuleActive: (ruleId: string, isActive: boolean) => Promise<void>
     checkRules: () => Promise<void>
+    pullServerState: () => Promise<void>
     testRule: (ruleId: string) => Promise<{ primary: any, backup: any }>
     startAutomation: () => void
     stopAutomation: () => void
@@ -67,17 +69,21 @@ const syncRuleToServer = async (rule: FailoverRule) => {
         if (!sessionKey) throw new Error('Encryption key not found')
 
         const authKey = await decrypt(account.authKey, sessionKey)
-        const baseUrl = serverUrl || 'http://localhost:3000'
+        const baseUrl = serverUrl || ''
+        const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
 
-        await axios.post(`${baseUrl}/api/autopilot/sync`, {
+        const addonList = account.addons || []
+
+        await axios.post(`${apiPath}/autopilot/sync`, {
             id: rule.id,
             accountId: rule.accountId,
             authKey,
             priorityChain: rule.priorityChain,
             activeUrl: rule.activeUrl,
-            isActive: rule.isActive
+            isActive: rule.isActive,
+            addonList
         })
-        console.log(`[Autopilot] Rule ${rule.id} synced to server.`)
+        console.log(`[Autopilot] Rule ${rule.id} synced to server (Live Mode).`)
     } catch (err) {
         console.error('[Autopilot] Server sync failed:', err)
     }
@@ -89,8 +95,10 @@ const deleteRuleFromServer = async (ruleId: string) => {
         const { auth, serverUrl } = useSyncStore.getState()
         if (!auth.isAuthenticated) return
 
-        const baseUrl = serverUrl || 'http://localhost:3000'
-        await axios.delete(`${baseUrl}/api/autopilot/${ruleId}`)
+        const baseUrl = serverUrl || ''
+        const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
+
+        await axios.delete(`${apiPath}/autopilot/${ruleId}`)
         console.log(`[Autopilot] Rule ${ruleId} deleted from server.`)
     } catch (err) {
         console.error('[Autopilot] Server deletion failed:', err)
@@ -133,9 +141,11 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             const storedRules = await localforage.getItem<FailoverRule[]>(STORAGE_KEY)
             const storedWebhook = await localforage.getItem<WebhookConfig>(STORAGE_KEY + ':webhook')
 
+            let rules: FailoverRule[] = []
+
             if (storedRules) {
                 const accounts = useAccountStore.getState().accounts
-                const migrated = storedRules.map(r => {
+                rules = storedRules.map(r => {
                     const ruleData = r as unknown as Record<string, string | undefined>
                     let primaryUrl = ruleData.primaryUrl || ''
                     let backupUrl = ruleData.backupUrl || ''
@@ -157,8 +167,75 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                         lastFailover: r.lastFailover ? new Date(r.lastFailover) : undefined
                     }
                 })
-                set({ rules: migrated })
             }
+
+            // Fetch server's current activeUrl for each rule and merge
+            // This ensures frontend reflects what the server-side Autopilot has set
+            try {
+                const { useSyncStore } = await import('@/store/syncStore')
+                const { auth, serverUrl } = useSyncStore.getState()
+
+                if (auth.isAuthenticated && rules.length > 0) {
+                    const accountIds = [...new Set(rules.map(r => r.accountId))]
+                    const baseUrl = serverUrl || ''
+                    const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
+
+                    for (const accountId of accountIds) {
+                        try {
+                            const resp = await axios.get(`${apiPath}/autopilot/state/${accountId}`)
+                            const serverStates = resp.data?.states || []
+
+                            // Merge server's activeUrl into local rules
+                            for (const serverRule of serverStates) {
+                                const localRule = rules.find(r => r.id === serverRule.id)
+                                if (localRule && serverRule.activeUrl) {
+                                    console.log(`[Failover] Syncing activeUrl from server: ${localRule.id} -> ${serverRule.activeUrl.substring(0, 40)}...`)
+                                    localRule.activeUrl = serverRule.activeUrl
+                                    const normServerActive = normalizeAddonUrl(serverRule.activeUrl).toLowerCase()
+                                    const normPrimary = normalizeAddonUrl(localRule.priorityChain?.[0] || '').toLowerCase()
+                                    localRule.status = normServerActive === normPrimary ? 'monitoring' : 'failed-over'
+
+                                    // CRITICAL: Also update account addon enabled states to match
+                                    // This ensures frontend addons reflect server Autopilot state
+                                    const chain = localRule.priorityChain || []
+                                    for (const url of chain) {
+                                        const normUrl = normalizeAddonUrl(url).toLowerCase()
+                                        const shouldBeEnabled = normUrl === normServerActive
+                                        // Use silent toggle to avoid triggering redundant syncs
+                                        await useAccountStore.getState().toggleAddonEnabled(
+                                            localRule.accountId,
+                                            url,
+                                            shouldBeEnabled,
+                                            true // silent
+                                        )
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.warn(`[Failover] Could not fetch server state for ${accountId}:`, e)
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[Failover] Server state fetch failed:', e)
+            }
+
+            set({ rules })
+
+            // Pull latest state from Stremio so the UI reflects the server's autopilot decisions
+            // We use false for forceRefresh to avoid a redundant deep sync/push back to Stremio
+            if (rules.length > 0) {
+                const affectedAccountIds = [...new Set(rules.map(r => r.accountId))]
+                for (const accountId of affectedAccountIds) {
+                    try {
+                        await useAccountStore.getState().syncAccount(accountId, false)
+                    } catch (e) {
+                        console.warn(`[Failover] Local UI sync failed for ${accountId}:`, e)
+                    }
+                }
+            }
+
+
 
             if (storedWebhook) {
                 set({ webhook: storedWebhook })
@@ -167,6 +244,79 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             console.error('Failed to load failover rules:', error)
         }
     },
+
+    pullServerState: async () => {
+        const { rules } = get()
+        if (rules.length === 0) return
+
+        try {
+            const { useSyncStore } = await import('@/store/syncStore')
+            const { auth, serverUrl } = useSyncStore.getState()
+
+            if (!auth.isAuthenticated) return
+
+            const accountIds = [...new Set(rules.map(r => r.accountId))]
+            const baseUrl = serverUrl || ''
+            const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
+
+            let hasUpdates = false
+            const updatedRules = [...rules]
+
+            for (const accountId of accountIds) {
+                try {
+                    const resp = await axios.get(`${apiPath}/autopilot/state/${accountId}`)
+                    const serverStates = resp.data?.states || []
+
+                    for (const serverRule of serverStates) {
+                        const ruleIndex = updatedRules.findIndex(r => r.id === serverRule.id)
+                        if (ruleIndex !== -1) {
+                            const localRule = updatedRules[ruleIndex]
+
+                            if (serverRule.activeUrl) {
+                                const normServerActive = normalizeAddonUrl(serverRule.activeUrl).toLowerCase()
+                                const normLocalActive = normalizeAddonUrl(localRule.activeUrl || '').toLowerCase()
+
+                                if (normServerActive !== normLocalActive) {
+                                    console.log(`[Failover] Server-side swap detected: ${localRule.id} -> ${serverRule.activeUrl}`)
+                                    const normPrimary = normalizeAddonUrl(localRule.priorityChain?.[0] || '').toLowerCase()
+
+                                    updatedRules[ruleIndex] = {
+                                        ...localRule,
+                                        activeUrl: serverRule.activeUrl,
+                                        status: normServerActive === normPrimary ? 'monitoring' : 'failed-over'
+                                    }
+                                    hasUpdates = true
+
+                                    // Update local account addons to reflect the enabled state
+                                    const chain = localRule.priorityChain || []
+                                    for (const url of chain) {
+                                        const normUrl = normalizeAddonUrl(url).toLowerCase()
+                                        const shouldBeEnabled = normUrl === normServerActive
+                                        await useAccountStore.getState().toggleAddonEnabled(
+                                            localRule.accountId,
+                                            url,
+                                            shouldBeEnabled,
+                                            true // silent
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Fail silently for background sync
+                }
+            }
+
+            if (hasUpdates) {
+                set({ rules: updatedRules })
+                await localforage.setItem(STORAGE_KEY, updatedRules)
+            }
+        } catch (e) {
+            console.warn('[Failover] pullServerState failed:', e)
+        }
+    },
+
 
     setWebhook: async (url, enabled) => {
         const config = { url, enabled }
@@ -179,13 +329,14 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
     },
 
     addRule: async (accountId, priorityChain) => {
+        const safeChain = Array.isArray(priorityChain) ? priorityChain : []
         const newRule: FailoverRule = {
             id: crypto.randomUUID(),
             accountId,
-            priorityChain,
+            priorityChain: safeChain,
             isActive: true,
             status: 'idle',
-            activeUrl: priorityChain[0]
+            activeUrl: safeChain[0]
         }
 
         const rules = [...get().rules, newRule]
@@ -217,6 +368,10 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         const rules = get().rules.map(r => r.id === ruleId ? { ...r, ...updates } : r)
         set({ rules })
         await localforage.setItem(STORAGE_KEY, rules)
+
+        // Update server Autopilot
+        const rule = rules.find(r => r.id === ruleId)
+        if (rule) await syncRuleToServer(rule)
 
         // Immediate sync
         const { useSyncStore } = await import('@/store/syncStore')
@@ -367,16 +522,23 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
 
     startAutomation: () => {
         if (automationInterval) return
+
+        // 1. Initial Immediate Pull & Check (No delay)
+        get().pullServerState()
+        get().checkRules()
+
         console.log('[Failover] Starting automation engine...')
         set({ isMonitoring: true })
 
-        // Initial check
-        get().checkRules()
-
-        // Interval check (every 1 minute)
+        // 2. Scheduled Background Updates
         automationInterval = setInterval(() => {
             // Idle Optimization: Skip autopilot checks if tab is hidden
             if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+
+            // 1. Pull latest state from server (Single Source of Truth)
+            get().pullServerState()
+
+            // 2. Perform local health checks (as fallback/double-check)
             get().checkRules()
         }, 1 * 60 * 1000)
     },
@@ -428,6 +590,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
 
             const migratedRule: FailoverRule = {
                 ...newRule,
+                priorityChain: Array.isArray(newRule.priorityChain) ? newRule.priorityChain : [],
                 primaryUrl,
                 backupUrl,
                 status: newRule.status || 'idle'

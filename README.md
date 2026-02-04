@@ -61,13 +61,28 @@ The soul of AIOManager is giving you complete authority over your Stremio ecosys
 
 ### 🛡️ Privacy First Sync
 *   **Local First**: Your data stays in your browser via IndexedDB.
-*   **Encrypted Cloud**: Optional sync using AES-256-GCM encryption. Your keys never leave your device.
+*   **Encrypted Cloud**: Optional sync using AES-256-GCM encryption. User-side keys never leave your device.
+*   **Server-Side Protection**: [New] Autopilot rules and Stremio auth keys are now encrypted at rest on the server using a global `ENCRYPTION_KEY` secret.
+
+---
+
+## [1.5.1] - The Stabilization Sweep 🛡️
+
+AIOManager v1.5.1 is a maintenance release focused on **reliability, hardening, and UI synchronization**.
+
+### 🛠️ Key Improvements
+- **Version Detection Fix**: Resolved a bug where multiple addons on the same domain (like AIOMetadata) would misreport version updates due to cache collisions.
+- **Autonomous Stabilization**: Hardened the Autopilot engine to trust the remote Stremio state as the definitive source of truth for addon enablement.
+- **Failover Hardening**: Squashed "priorityChain is not iterable" crashes during account cloning and implemented defensive array defaults.
+- **Silent Health Checks**: Standardized the "Silent Domain-Only" health check across both Autopilot and Saved Addons to prevent provider flood logs.
+- **URL Normalization**: Unified robust URL normalization logic to handle `stremio://` protocols and trailing slashes consistently across the stack.
+- **Postgres Support**: Fixed `JSONB` column strictness by converting to `TEXT` for encrypted string support.
 
 ---
 
 ## [1.5.0] - The Sovereign Update 🚀
 
-AIOManager v1.5.0 is a milestone release focused on **infrastructure independence** and **autonomous reliability**.
+AIOManager v1.5.x is a milestone series focused on **infrastructure independence** and **autonomous reliability**.
 
 ### 📦 Installation
 
@@ -89,7 +104,37 @@ AIOManager is now optimized for **Unraid**! You can find the template in the [un
 
 ---
 
-## 🔒 Security Requirements
+## 🚀 High Availability & Multi-Tenant (K8s/Clustered)
+
+AIOManager is designed for high-scale environments like **Kubernetes** clusters or larger multi-tenant deployments.
+
+### PostgreSQL Support (Recommended for Scale)
+For deployments with many users, switch from SQLite to **PostgreSQL** to unlock horizontal scaling and better concurrency:
+- Set `DB_TYPE=postgres`
+- Provide `DATABASE_URL=postgres://user:pass@host:5432/dbname`
+
+### Health & Readiness Probes
+The server includes a dedicated health endpoint for orchestrators:
+- **Endpoint**: `/api/health`
+- **Behavior**: Returns `200 OK` (ok) or `503 Service Unavailable` (degraded) if the database connection is lost. Use this for your K8s Liveness and Readiness probes.
+
+### Stateless Scaling
+With PostgreSQL enabled and `DATA_DIR` mapped to a persistent volume (for `server_secret.key`), the API instances are stateless and can be scaled horizontally behind a load balancer.
+
+---
+
+## �🛡️ Security & Zero-Config Encryption
+
+AIOManager is designed to be **secure by default**, even in public instances with many users.
+
+### Server-Side Data Protection
+Sensitive Autopilot rules (including Stremio auth keys) are encrypted at rest on the server using AES-256-GCM.
+
+### Zero-Config Security
+You don't need to manually configure encryption for it to work:
+1. **Automatic Generation**: If `ENCRYPTION_KEY` is not provided in your `.env`, the server automatically generates a secure random 32-byte key on first boot.
+2. **Persistent Storage**: This key is saved to your `DATA_DIR/server_secret.key`.
+3. **Multi-Key Fallback (Anti-Lockout)**: If you later decide to set a manual `ENCRYPTION_KEY`, the server will use your new key for *new* data, but will automatically use the old `server_secret.key` as a fallback. This ensures that existing users are never locked out of their data if you change the server configuration.
 
 ### Secure Context (HTTPS) Required
 

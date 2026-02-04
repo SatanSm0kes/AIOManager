@@ -95,17 +95,18 @@ function isActuallyWatched(item: LibraryItem): boolean {
 function getUniqueItemId(item: LibraryItem): string {
     const baseId = item._id
 
-    if (item.type === 'series' && item.state?.video_id) {
+    // Handle both series and anime types
+    if ((item.type === 'series' || item.type === 'anime') && item.state?.video_id) {
         const videoId = item.state.video_id
         const parts = videoId.split(':')
 
-        // Standard format: "tt123:season:episode" (3 parts)
+        // Standard format: "tt123:season:episode" (3 parts) or Kitsu "kitsu:id:s:e" (4 parts)
         if (parts.length >= 3) {
             return videoId // Already unique per episode
         }
         // Format: "tt123:episode" (2 parts, no season)
         if (parts.length === 2) {
-            return `${parts[0]}:0:${parts[1]}` // Normalize to season 0
+            return `${parts[0]}:1:${parts[1]}` // Normalize to season 1
         }
     }
 
@@ -134,29 +135,60 @@ function getWatchTimestamp(item: LibraryItem): Date {
 
 /**
  * Extracts season/episode from video_id.
+ * Handles multiple formats:
+ * - IMDB: "tt123:season:episode" (3 parts, starts with 'tt')
+ * - Kitsu/MAL: "kitsu:12345:episode" (3 parts, provider prefix = no season)
+ * - Kitsu with season: "kitsu:12345:season:episode" (4 parts)
+ * - Simple: "id:episode" (2 parts, season defaults to 1)
  */
 function getSeasonEpisode(item: LibraryItem): { season?: number; episode?: number } {
-    if (item.type !== 'series' || !item.state?.video_id) {
+    // Handle both series and anime types
+    if ((item.type !== 'series' && item.type !== 'anime') || !item.state?.video_id) {
         return {}
     }
 
     const parts = item.state.video_id.split(':')
-    if (parts.length === 3) {
+    const firstPart = parts[0]?.toLowerCase() || ''
+
+    // Known anime providers that use format: provider:id:episode (no season)
+    const animeProviders = ['kitsu', 'mal', 'anilist', 'anidb', 'tmdb']
+    const isAnimeProvider = animeProviders.includes(firstPart)
+
+    // 4 parts: "kitsu:12345:season:episode" - extract last two
+    if (parts.length >= 4) {
         return {
-            season: parseInt(parts[1], 10) || 0,
+            season: parseInt(parts[parts.length - 2], 10) || 1,
+            episode: parseInt(parts[parts.length - 1], 10) || 0
+        }
+    }
+
+    // 3 parts with anime provider: "kitsu:12345:episode" - NO season info
+    if (parts.length === 3 && isAnimeProvider) {
+        return {
+            season: 1, // Anime with provider prefix = season 1 by default
             episode: parseInt(parts[2], 10) || 0
         }
     }
+
+    // 3 parts with IMDB format: "tt123:season:episode"
+    if (parts.length === 3) {
+        return {
+            season: parseInt(parts[1], 10) || 1,
+            episode: parseInt(parts[2], 10) || 0
+        }
+    }
+
+    // 2 parts: "id:episode" (no season info)
     if (parts.length === 2) {
         return {
-            season: 0,
+            season: 1,
             episode: parseInt(parts[1], 10) || 0
         }
     }
 
     // Fallback to state values if available
     return {
-        season: item.state.season,
+        season: item.state.season ?? 1,
         episode: item.state.episode
     }
 }
@@ -233,7 +265,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
                             return {
                                 id: `${account.id}:${uniqueItemId}`,
                                 accountId: account.id,
-                                accountName: account.name || account.email || account.id,
+                                accountName: account.name || account.email?.split('@')[0] || account.id || 'Unknown',
                                 accountColorIndex,
                                 itemId: item._id,
                                 uniqueItemId,

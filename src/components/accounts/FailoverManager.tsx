@@ -200,8 +200,12 @@ export function FailoverManager({ accountId }: FailoverManagerProps) {
 
                     <div className="grid gap-4">
                         {accountRules.map(rule => {
+                            if (!rule || !rule.priorityChain) return null;
                             const activeAddon = addons.find(a => a.transportUrl === rule.activeUrl)
                             const isPrimary = rule.activeUrl === rule.priorityChain[0]
+
+                            const lastCheckDate = rule.lastCheck ? new Date(rule.lastCheck) : null
+                            const isValidDate = lastCheckDate && !isNaN(lastCheckDate.getTime())
 
                             return (
                                 <Card key={rule.id} className={`transition-all ${!isPrimary ? 'border-amber-500/50 bg-amber-500/5' : ''}`}>
@@ -257,8 +261,8 @@ export function FailoverManager({ accountId }: FailoverManagerProps) {
 
                                         <div className="flex items-center justify-between text-xs pt-2 border-t text-muted-foreground">
                                             <div className="flex gap-4">
-                                                <span>Uptime Score: <span className="text-primary font-bold">{Object.values(rule.stabilization || {}).reduce((a, b) => a + b, 0)} Check Successes</span></span>
-                                                {rule.lastCheck && <span>Last Probe: {formatDistanceToNow(new Date(rule.lastCheck), { addSuffix: true })}</span>}
+                                                <span>Uptime Score: <span className="text-primary font-bold">{Object.values(rule.stabilization || {}).reduce((a: number, b: number) => a + (Number(b) || 0), 0)} Check Successes</span></span>
+                                                {isValidDate && lastCheckDate && <span>Last Probe: {formatDistanceToNow(lastCheckDate, { addSuffix: true })}</span>}
                                             </div>
                                             <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => {
                                                 setChain(rule.priorityChain)
@@ -319,32 +323,37 @@ function FailoverHistory() {
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {logs.map((log) => (
-                            <TableRow key={log.id}>
-                                <TableCell className="whitespace-nowrap font-medium text-xs text-muted-foreground">
-                                    {formatDistanceToNow(new Date(log.timestamp), { addSuffix: true })}
-                                </TableCell>
-                                <TableCell>
-                                    <BadgeForType type={log.type} />
-                                </TableCell>
-                                <TableCell className="text-sm">
-                                    {log.metadata?.chain ? (
-                                        <div className="flex items-center gap-1 text-[10px] opacity-70">
-                                            {log.metadata.chain.length} tiers
-                                            <ArrowRight className="w-2 h-2" />
-                                            {log.metadata.activeUrl?.slice(-8)}
-                                        </div>
-                                    ) : (
-                                        <div className="text-xs truncate max-w-[100px]">
-                                            {log.primaryName || 'System'}
-                                        </div>
-                                    )}
-                                </TableCell>
-                                <TableCell className="text-sm text-muted-foreground">
-                                    {log.message}
-                                </TableCell>
-                            </TableRow>
-                        ))}
+                        {logs.map((log) => {
+                            const logDate = log.timestamp ? new Date(log.timestamp) : null;
+                            const isValidLogDate = logDate && !isNaN(logDate.getTime());
+
+                            return (
+                                <TableRow key={log.id}>
+                                    <TableCell className="whitespace-nowrap font-medium text-xs text-muted-foreground">
+                                        {isValidLogDate && logDate ? formatDistanceToNow(logDate, { addSuffix: true }) : 'Unknown time'}
+                                    </TableCell>
+                                    <TableCell>
+                                        <BadgeForType type={log.type} />
+                                    </TableCell>
+                                    <TableCell className="text-sm">
+                                        {log.metadata?.chain ? (
+                                            <div className="flex items-center gap-1 text-[10px] opacity-70">
+                                                {log.metadata.chain.length} tiers
+                                                <ArrowRight className="w-2 h-2" />
+                                                {log.metadata.activeUrl?.slice(-8)}
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs truncate max-w-[100px]">
+                                                {log.primaryName || 'System'}
+                                            </div>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {log.message}
+                                    </TableCell>
+                                </TableRow>
+                            )
+                        })}
                     </TableBody>
                 </Table>
             </CardContent>
