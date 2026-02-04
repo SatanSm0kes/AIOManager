@@ -142,7 +142,8 @@ export function BulkSaveDialog({
                         addon.transportUrl,
                         tags,
                         finalProfileId,
-                        addon.manifest
+                        addon.manifest,
+                        addon.metadata
                     )
                     successCount++
                 } catch (err) {

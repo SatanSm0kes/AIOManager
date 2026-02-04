@@ -38,11 +38,11 @@ export async function checkAddonHealth(addonUrl: string): Promise<boolean> {
     // Continue to proxy
   }
 
-  // 2. Fallback to CORS proxy (slower but reliable)
+  // 2. Fallback to CORS proxy (AllOrigins)
   try {
     const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(manifestUrl)}`
     const controller = new AbortController()
-    const id = setTimeout(() => controller.abort(), 10000)
+    const id = setTimeout(() => controller.abort(), 8000)
 
     const response = await fetch(proxyUrl, {
       method: 'GET',
@@ -52,19 +52,39 @@ export async function checkAddonHealth(addonUrl: string): Promise<boolean> {
 
     clearTimeout(id)
     if (response.ok) {
-      // Validate content is JSON
       try {
         await response.json()
         return true
       } catch (e) {
-        // Not JSON, likely an error page
         return false
       }
     }
-    return false
+  } catch (err) {
+    // Continue to next proxy
+  }
+
+  // 3. Fallback to CORSProxy.io (Backup)
+  try {
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(manifestUrl)}`
+    const controller = new AbortController()
+    const id = setTimeout(() => controller.abort(), 8000)
+
+    const response = await fetch(proxyUrl, {
+      method: 'GET',
+      signal: controller.signal,
+      cache: 'no-cache'
+    })
+
+    clearTimeout(id)
+    if (response.ok) {
+      await response.json()
+      return true
+    }
   } catch (err) {
     return false
   }
+
+  return false
 }
 
 /**
@@ -93,12 +113,60 @@ export async function checkAllAddonsHealth(
   onProgress?: (completed: number, total: number) => void
 ): Promise<SavedAddon[]> {
   const CONCURRENT_LIMIT = 5
-  const results: SavedAddon[] = []
+  const results: SavedAddon[] = [...addons]
+  const domainHealthCache: Record<string, boolean> = {}
+  const PENDING_CHECKS: Record<string, Promise<boolean>> = {}
 
   for (let i = 0; i < addons.length; i += CONCURRENT_LIMIT) {
     const batch = addons.slice(i, i + CONCURRENT_LIMIT)
-    const checked = await Promise.all(batch.map((addon) => updateAddonHealth(addon)))
-    results.push(...checked)
+
+    await Promise.all(batch.map(async (addon, batchIndex) => {
+      const globalIndex = i + batchIndex
+
+      let origin = ''
+      try {
+        origin = new URL(addon.installUrl).origin
+      } catch (e) {
+        origin = addon.installUrl
+      }
+
+      let isOnline: boolean
+      if (domainHealthCache[origin] === true) {
+        isOnline = true
+      } else {
+        // Use shared promise for in-flight checks to the same origin
+        if (!PENDING_CHECKS[origin]) {
+          PENDING_CHECKS[origin] = checkAddonHealth(addon.installUrl).then(status => {
+            if (status) {
+              domainHealthCache[origin] = true
+            }
+            // Temporarily keep it in the cache to collapse other simultaneous requests
+            setTimeout(() => delete PENDING_CHECKS[origin], 2000)
+            return status
+          })
+        }
+
+        const sharedStatus = await PENDING_CHECKS[origin]
+        if (sharedStatus) {
+          isOnline = true
+        } else {
+          // If the shared/first check failed, don't assume everyone on this domain is dead.
+          // This specific addon gets to try its own URL as a fallback.
+          isOnline = await checkAddonHealth(addon.installUrl)
+          if (isOnline) {
+            domainHealthCache[origin] = true
+          }
+        }
+      }
+
+      results[globalIndex] = {
+        ...addon,
+        health: {
+          isOnline,
+          lastChecked: Date.now(),
+        },
+      }
+    }))
 
     // Report progress
     if (onProgress) {

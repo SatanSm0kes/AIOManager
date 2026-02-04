@@ -23,15 +23,23 @@
 
 ---
 
+> [!NOTE]
+> **Project Goal & Maintenance Status**
+> This project was developed as a personal tool to fill the gap in advanced Stremio account management. It is currently **feature-complete** for my personal needs. While I am happy to share it with the community, I am not looking for feature requests at this time. Pull Requests and bug reports are welcome, but maintenance is done on a best-effort basis.
+
+---
+
 ## ⚡ Features
 
 ### 🛠️ Total Management
 The soul of AIOManager is giving you complete authority over your Stremio ecosystem.
 *   **Addon Snapshots**: Save configurations for complex addons like AIOStreams or AIOMetadata to your private library.
 *   **Account Sync**: Seamlessly switch between multiple Stremio logins without losing your place.
-*   **Bulk Actions**: Pick dozens of history items or addons to move, tag, or delete in one go.
+*   **Bulk Actions**: picking dozens of history items to move, or using **Bulk Install from URLs** to hydrate new accounts instantly.
+*   **Account Cloning**: Effortlessly clone one account's setup to another using the **Concatenate** strategy (Safe Copy).
+*   **Duplicate Support**: Manage multiple instances of the same addon (e.g., dual Debrid configs) with index-based targeting that prevents overwrites.
 *   **Granular Control**: Reorder profiles, customize addon branding, and manage your sidebar exactly how you want it.
-*   **Failover Logic**: Automatically switch to backup addons if your primary provider goes offline.
+*   **Failover Logic**: Automatically switch to backup addons if your primary provider goes offline with real-time health flags.
 
 <div align="center">
   <h4>Granular Addon Control</h4>
@@ -61,6 +69,7 @@ The soul of AIOManager is giving you complete authority over your Stremio ecosys
 
 ### Docker (Recommended)
 This is the easiest way to run AIOManager on your home server.
+
 1. Download the `docker-compose.yml` and create a `.env` file from the example.
 2. Run the following command:
 ```bash
@@ -69,13 +78,32 @@ docker compose pull && docker compose up -d
 
 ---
 
+## 🔒 Security Requirements
+
+### Secure Context (HTTPS) Required
+
+> [!IMPORTANT]
+> AIOManager **must** be served over a **Secure Context** (HTTPS or Localhost). Browser security policies block the necessary encryption APIs on insecure remote connections.
+
+#### Option 1: The Proper Way (Recommended)
+*   **Localhost**: Works over `http://localhost:5173`.
+*   **Remote/Server**: **HTTPS is Mandatory** (via reverse proxy like Traefik, Caddy, or Nginx Proxy Manager).
+*   **Plain HTTP over IP**: Accessing via `http://192.168.x.x` **will not work**.
+
+#### Option 2: Browser Bypass (Advanced / Chrome & Edge)
+If you cannot set up a reverse proxy, you can force your browser to treat your server's IP as secure:
+1. Open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
+2. Add your server's address: `http://192.168.x.x:8080` (replace with your IP/Port)
+3. Change the dropdown to **Enabled**
+4. Relaunch your browser.
+
 ## 🏁 Getting Started
 
 Once the app is running:
 1. Open the app in your browser (usually `http://localhost:5173` or your server IP).
 2. You will be greeted by the **Login** screen. Stay on the **New Account** tab to generate your unique **Account UUID**.
 3. Choose a strong password. This is the **only key** to your encrypted data.
-4. Once inside, go to **Settings** -> **Accounts** to link your Stremio identities and start managing.
+4. Once inside, use the **Accounts** page to link your Stremio identities. You can then go to **Settings** to customize your name for AIOManager or enable Auto-Save. (Note you still need to use your UUID to login) 
 
 <div align="center">
   <h4>Initial Setup & Login</h4>

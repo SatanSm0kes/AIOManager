@@ -161,41 +161,64 @@ export interface AddonUpdateInfo {
  */
 export async function checkAddonUpdates(addons: AddonDescriptor[]): Promise<AddonUpdateInfo[]> {
   // Filter out official addons only (protected addons can still be updated)
-  const checkableAddons = addons.filter(
-    (addon) => !addon.flags?.official
-  )
+  const checkableAddons = addons.filter((addon) => !addon.flags?.official)
 
-  console.log(`[Update Check] Checking ${checkableAddons.length} addons sequentially...`)
+  console.log(`[Update Check] Checking ${checkableAddons.length} addons in batches with robust domain caching...`)
 
   const results: AddonUpdateInfo[] = []
+  const domainHealthCache: Record<string, boolean> = {}
+  const PENDING_CHECKS: Record<string, Promise<boolean>> = {}
+  const batchSize = 10
 
-  for (const addon of checkableAddons) {
-    try {
-      // Check both addon health and version in parallel
-      const [latestManifest, isOnline] = await Promise.all([
-        stremioClient.fetchAddonManifest(addon.transportUrl),
-        checkAddonHealth(addon.transportUrl),
-      ])
+  for (let i = 0; i < checkableAddons.length; i += batchSize) {
+    const batch = checkableAddons.slice(i, i + batchSize)
+    const batchPromises = batch.map(async (addon) => {
+      try {
+        let origin = ''
+        try {
+          origin = new URL(addon.transportUrl).origin
+        } catch (e) {
+          origin = addon.transportUrl
+        }
 
-      const hasUpdate = latestManifest.manifest.version !== addon.manifest.version
+        const healthPromise = domainHealthCache[origin] === true
+          ? Promise.resolve(true)
+          : (async () => {
+            if (!PENDING_CHECKS[origin]) {
+              PENDING_CHECKS[origin] = checkAddonHealth(addon.transportUrl).then((status) => {
+                if (status) domainHealthCache[origin] = true
+                setTimeout(() => delete PENDING_CHECKS[origin], 2000)
+                return status
+              })
+            }
+            const sharedStatus = await PENDING_CHECKS[origin]
+            return sharedStatus || checkAddonHealth(addon.transportUrl)
+          })()
 
-      console.log(
-        `[Update Check] ${addon.manifest.name}: installed=${addon.manifest.version}, latest=${latestManifest.manifest.version}, hasUpdate=${hasUpdate}, isOnline=${isOnline}`
-      )
+        const [latestManifest, isOnline] = await Promise.all([
+          stremioClient.fetchAddonManifest(addon.transportUrl),
+          healthPromise,
+        ])
 
-      results.push({
-        addonId: addon.manifest.id,
-        name: addon.manifest.name,
-        transportUrl: addon.transportUrl,
-        installedVersion: addon.manifest.version,
-        latestVersion: latestManifest.manifest.version,
-        hasUpdate,
-        isOnline,
-      })
-    } catch (error) {
-      console.warn(`[Update Check] Failed to check ${addon.manifest.name}:`, error)
-      console.warn(`  URL was: ${addon.transportUrl}`)
-    }
+        const hasUpdate = latestManifest.manifest.version !== addon.manifest.version
+
+        return {
+          addonId: addon.manifest.id,
+          name: addon.manifest.name,
+          transportUrl: addon.transportUrl,
+          installedVersion: addon.manifest.version,
+          latestVersion: latestManifest.manifest.version,
+          hasUpdate,
+          isOnline,
+        }
+      } catch (error) {
+        console.warn(`[Update Check] Failed to check ${addon.manifest.name}:`, error)
+        return null
+      }
+    })
+
+    const batchResults = await Promise.all(batchPromises)
+    results.push(...(batchResults.filter(Boolean) as AddonUpdateInfo[]))
   }
 
   console.log(`[Update Check] Complete: ${results.length} checked`)
@@ -203,10 +226,6 @@ export async function checkAddonUpdates(addons: AddonDescriptor[]): Promise<Addo
   return results
 }
 
-/**
- * Check which saved addons have updates available.
- * Fetches manifests sequentially to avoid overwhelming the server/proxy.
- */
 export async function checkSavedAddonUpdates(
   savedAddons: {
     id: string
@@ -215,40 +234,91 @@ export async function checkSavedAddonUpdates(
     manifest: { id: string; name: string; version: string }
   }[]
 ): Promise<AddonUpdateInfo[]> {
-  console.log(`[Update Check] Checking ${savedAddons.length} saved addons sequentially...`)
+  console.log(`[Update Check] Checking ${savedAddons.length} saved addons with Domain+ID deduplication (v3)...`)
 
+  const domainHealthCache: Record<string, boolean> = {}
+  const PENDING_CHECKS: Record<string, Promise<boolean>> = {}
+  const PENDING_MANIFESTS: Record<string, Promise<AddonDescriptor>> = {}
+
+  // Group by Domain + Addon ID to handle UUID-based duplicates (AIOStreams style)
   const results: AddonUpdateInfo[] = []
+  const batchSize = 10
 
-  for (const addon of savedAddons) {
-    try {
-      // Check both addon health and version in parallel
-      const [latestManifest, isOnline] = await Promise.all([
-        stremioClient.fetchAddonManifest(addon.installUrl),
-        checkAddonHealth(addon.installUrl),
-      ])
+  for (let i = 0; i < savedAddons.length; i += batchSize) {
+    const batch = savedAddons.slice(i, i + batchSize)
+    const batchPromises = batch.map(async (addon) => {
+      try {
+        let origin = ''
+        try {
+          origin = new URL(addon.installUrl).origin
+        } catch (e) {
+          origin = addon.installUrl
+        }
 
-      const hasUpdate = latestManifest.manifest.version !== addon.manifest.version
+        // Composite key for deduplication: Domain + Addon ID
+        // This ensures UUID-based variations of the same addon on the same domain are shared.
+        const groupKey = `${origin}:${addon.manifest.id}`
 
-      console.log(
-        `[Update Check] ${addon.name}: installed=${addon.manifest.version}, latest=${latestManifest.manifest.version}, hasUpdate=${hasUpdate}, isOnline=${isOnline}`
-      )
+        const healthPromise = domainHealthCache[origin] === true
+          ? Promise.resolve(true)
+          : (async () => {
+            // Use shared promise for in-flight checks to the same origin
+            if (!PENDING_CHECKS[origin]) {
+              PENDING_CHECKS[origin] = checkAddonHealth(addon.installUrl).then(status => {
+                if (status) domainHealthCache[origin] = true
+                setTimeout(() => delete PENDING_CHECKS[origin], 2000)
+                return status
+              })
+            }
+            const sharedStatus = await PENDING_CHECKS[origin]
+            return sharedStatus || checkAddonHealth(addon.installUrl)
+          })()
 
-      results.push({
-        addonId: addon.id,
-        name: addon.name,
-        transportUrl: addon.installUrl,
-        installedVersion: addon.manifest.version,
-        latestVersion: latestManifest.manifest.version,
-        hasUpdate,
-        isOnline,
-      })
-    } catch (error) {
-      console.warn(`[Update Check] Failed to check ${addon.name}:`, error)
-      console.warn(`  URL was: ${addon.installUrl}`)
-    }
+        // Deduplicate manifest fetch by Group Key
+        const manifestResult = await (async () => {
+          if (!PENDING_MANIFESTS[groupKey]) {
+            PENDING_MANIFESTS[groupKey] = stremioClient.fetchAddonManifest(addon.installUrl).catch(async (err) => {
+              // Clean up immediately on error so next ones don't inherit the failure
+              delete PENDING_MANIFESTS[groupKey]
+              throw err
+            })
+          }
+
+          try {
+            return await PENDING_MANIFESTS[groupKey]
+          } catch (e) {
+            // Fallback: try fetching specifically for THIS URL if the shared one failed
+            return await stremioClient.fetchAddonManifest(addon.installUrl)
+          }
+        })()
+
+        const [isOnline] = await Promise.all([
+          healthPromise,
+        ])
+
+        const latestManifest = manifestResult
+
+        const hasUpdate = latestManifest.manifest.version !== addon.manifest.version
+
+        return {
+          addonId: addon.id,
+          name: addon.name,
+          transportUrl: addon.installUrl,
+          installedVersion: addon.manifest.version,
+          latestVersion: latestManifest.manifest.version,
+          hasUpdate,
+          isOnline,
+        }
+      } catch (error) {
+        console.warn(`[Update Check] Failed to check ${addon.name}:`, error)
+        return null
+      }
+    })
+
+    const batchResults = await Promise.all(batchPromises)
+    results.push(...(batchResults.filter(Boolean) as AddonUpdateInfo[]))
   }
 
   console.log(`[Update Check] Complete: ${results.length} checked`)
-
   return results
 }

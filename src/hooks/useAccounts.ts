@@ -21,6 +21,7 @@ export function useAccounts() {
     removeAccount,
     syncAccount,
     syncAllAccounts,
+    repairAccount: useAccountStore((state) => state.repairAccount),
     updateAccount: useAccountStore((state) => state.updateAccount),
     reorderAccounts: useAccountStore((state) => state.reorderAccounts),
     clearError,

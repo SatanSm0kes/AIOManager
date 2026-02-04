@@ -270,16 +270,18 @@ export function ActivityFeed({
     return (
         <div className="space-y-6">
             <Tabs defaultValue="all" onValueChange={setActiveTab} className="w-full">
-                <div className="flex items-center justify-between mb-2">
-                    <TabsList>
-                        <TabsTrigger value="all">All Activity</TabsTrigger>
-                        <TabsTrigger value="movies">Movies</TabsTrigger>
-                        <TabsTrigger value="series">Series</TabsTrigger>
-                        <TabsTrigger value="now" className="data-[state=active]:text-green-400 data-[state=active]:bg-green-400/10">
-                            <Activity className="h-3 w-3 mr-1.5" /> Now
-                        </TabsTrigger>
-                    </TabsList>
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground hidden sm:block">
+                <div className="flex items-center justify-between mb-2 gap-4">
+                    <div className="overflow-x-auto scrollbar-hide">
+                        <TabsList className="flex whitespace-nowrap">
+                            <TabsTrigger value="all" className="shrink-0">All Activity</TabsTrigger>
+                            <TabsTrigger value="movies" className="shrink-0">Movies</TabsTrigger>
+                            <TabsTrigger value="series" className="shrink-0">Series</TabsTrigger>
+                            <TabsTrigger value="now" className="data-[state=active]:text-green-400 data-[state=active]:bg-green-400/10 shrink-0">
+                                <Activity className="h-3 w-3 mr-1.5" /> Now
+                            </TabsTrigger>
+                        </TabsList>
+                    </div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground hidden sm:block whitespace-nowrap">
                         {history.length} movies and shows
                     </div>
                 </div>

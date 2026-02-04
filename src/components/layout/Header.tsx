@@ -59,10 +59,10 @@ export function Header() {
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex gap-4 mt-4 border-b">
+        <div className="flex gap-4 mt-4 border-b overflow-x-auto scrollbar-hide whitespace-nowrap">
           <Link
             to="/"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 ${location.pathname === '/' || location.pathname.startsWith('/account/')
+            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 ${location.pathname === '/' || location.pathname.startsWith('/account/')
               ? 'border-primary text-foreground font-medium'
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               }`}
@@ -71,7 +71,7 @@ export function Header() {
           </Link>
           <Link
             to="/saved-addons"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 ${location.pathname === '/saved-addons'
+            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 ${location.pathname === '/saved-addons'
               ? 'border-primary text-foreground font-medium'
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               }`}
@@ -81,7 +81,7 @@ export function Header() {
 
           <Link
             to="/activity"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 ${location.pathname === '/activity'
+            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 ${location.pathname === '/activity'
               ? 'border-primary text-foreground font-medium'
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               }`}
@@ -90,7 +90,7 @@ export function Header() {
           </Link>
           <Link
             to="/metrics"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 ${location.pathname === '/metrics'
+            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 ${location.pathname === '/metrics'
               ? 'border-primary text-foreground font-medium'
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               }`}
@@ -99,7 +99,7 @@ export function Header() {
           </Link>
           <Link
             to="/settings"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 ${location.pathname === '/settings'
+            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 ${location.pathname === '/settings'
               ? 'border-primary text-foreground font-medium'
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               }`}
@@ -108,7 +108,7 @@ export function Header() {
           </Link>
           <Link
             to="/faq"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 ${location.pathname === '/faq'
+            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 ${location.pathname === '/faq'
               ? 'border-primary text-foreground font-medium'
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
               }`}

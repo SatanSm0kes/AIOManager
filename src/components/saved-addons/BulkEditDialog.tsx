@@ -7,6 +7,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import {
     Select,
@@ -19,7 +20,7 @@ import { TagInput } from '@/components/ui/tag-input'
 import { TagSelector } from '@/components/ui/tag-selector'
 import { useAddonStore } from '@/store/addonStore'
 import { useProfileStore } from '@/store/profileStore'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Tags, User } from 'lucide-react'
 import { useEffect, useState, useMemo } from 'react'
 
 interface BulkEditDialogProps {
@@ -86,68 +87,83 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-md">
-                <DialogHeader>
+            <DialogContent className="sm:max-w-xl">
+                <DialogHeader className="pb-4 border-b">
                     <DialogTitle>Bulk Edit {selectedCount} Addons</DialogTitle>
                     <DialogDescription>
-                        Apply changes to all selected addons.
+                        Apply changes to all selected addons at once.
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="grid gap-6 py-4">
-                    <div className="space-y-4">
-                        <Label className="uppercase text-xs font-bold text-muted-foreground">Tag Management</Label>
+                <div className="grid gap-6 py-6">
+                    {/* Tag Management Card */}
+                    <Card className="border shadow-none">
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wide text-muted-foreground">
+                                <Tags className="h-4 w-4" />
+                                Tag Management
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="grid gap-5">
+                            <div className="grid gap-2">
+                                <Label className="text-xs font-medium">Add Tags</Label>
+                                <TagInput
+                                    value={tagsToAdd}
+                                    onChange={setTagsToAdd}
+                                    placeholder="Type and press Enter to add..."
+                                    suggestions={allKnownTags}
+                                />
+                                <p className="text-[10px] text-muted-foreground">
+                                    These tags will be appended to the selection.
+                                </p>
+                            </div>
 
-                        <div className="grid gap-2">
-                            <Label>Add Tags</Label>
-                            <TagInput
-                                value={tagsToAdd}
-                                onChange={setTagsToAdd}
-                                placeholder="Type and press Enter to add..."
-                                suggestions={allKnownTags}
-                            />
-                            <p className="text-[10px] text-muted-foreground">
-                                Tags will be added to all selected addons.
-                            </p>
-                        </div>
+                            <div className="grid gap-2">
+                                <Label className="text-xs font-medium">Remove Tags</Label>
+                                <TagSelector
+                                    value={tagsToRemove}
+                                    onChange={setTagsToRemove}
+                                    options={availableTags}
+                                    placeholder="Select tags to remove..."
+                                />
+                                <p className="text-[10px] text-muted-foreground">
+                                    Only tags currently present in the selection are shown here.
+                                </p>
+                            </div>
+                        </CardContent>
+                    </Card>
 
-                        <div className="grid gap-2">
-                            <Label>Remove Tags</Label>
-                            <TagSelector
-                                value={tagsToRemove}
-                                onChange={setTagsToRemove}
-                                options={availableTags}
-                                placeholder="Select tags to remove..."
-                            />
-                            <p className="text-[10px] text-muted-foreground">
-                                Only tags present in the selection are shown.
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="space-y-4">
-                        <Label className="uppercase text-xs font-bold text-muted-foreground">Profile</Label>
-                        <div className="grid gap-2">
-                            <Label htmlFor="profile">Move to Profile</Label>
-                            <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Don't change profile" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="no-change">Don't change profile</SelectItem>
-                                    <SelectItem value="unassigned">Unassigned (No Profile)</SelectItem>
-                                    {profiles.map((profile) => (
-                                        <SelectItem key={profile.id} value={profile.id}>
-                                            {profile.name}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </div>
+                    {/* Profile Card */}
+                    <Card className="border shadow-none">
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wide text-muted-foreground">
+                                <User className="h-4 w-4" />
+                                Profile Assignment
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="grid gap-2">
+                                <Label htmlFor="profile" className="text-xs font-medium">Move to Profile</Label>
+                                <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
+                                    <SelectTrigger className="bg-background">
+                                        <SelectValue placeholder="Don't change profile" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="no-change">Don't change profile</SelectItem>
+                                        <SelectItem value="unassigned">Unassigned (No Profile)</SelectItem>
+                                        {profiles.map((profile) => (
+                                            <SelectItem key={profile.id} value={profile.id}>
+                                                {profile.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </CardContent>
+                    </Card>
                 </div>
 
-                <DialogFooter>
+                <DialogFooter className="pt-4 border-t">
                     <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
                         Cancel
                     </Button>

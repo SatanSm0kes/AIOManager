@@ -49,6 +49,8 @@ export function SavedAddonLibrary() {
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
+  const [updatingAll, setUpdatingAll] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState({ current: 0, total: 0 })
   const latestVersions = useAddonStore((state) => state.latestVersions)
   const updateLatestVersions = useAddonStore((state) => state.updateLatestVersions)
   const { toast } = useToast()
@@ -77,7 +79,7 @@ export function SavedAddonLibrary() {
     setCheckingUpdates(true)
     try {
       // 1. Check ALL Health
-      useAddonStore.getState().checkAllHealth()
+      await useAddonStore.getState().checkAllHealth()
 
       // 2. Check Updates
       const updateInfoList = await checkSavedAddonUpdates(savedAddons)
@@ -126,7 +128,6 @@ export function SavedAddonLibrary() {
     async (savedAddonId: string, addonName: string) => {
       try {
         await updateSavedAddonManifest(savedAddonId)
-
         toast({
           title: 'Addon Updated',
           description: `Successfully updated ${addonName} to the latest version`,
@@ -141,6 +142,40 @@ export function SavedAddonLibrary() {
     },
     [updateSavedAddonManifest, toast]
   )
+
+  const handleUpdateAll = useCallback(async () => {
+    const addonsWithUpdates = savedAddons.filter((addon) => {
+      const latest = latestVersions[addon.manifest.id]
+      return latest && latest !== addon.manifest.version
+    })
+
+    if (addonsWithUpdates.length === 0) return
+
+    setUpdatingAll(true)
+    setUpdateProgress({ current: 0, total: addonsWithUpdates.length })
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const addon of addonsWithUpdates) {
+      try {
+        await updateSavedAddonManifest(addon.id)
+        successCount++
+      } catch (err) {
+        console.error(`Failed to update ${addon.name}:`, err)
+        failCount++
+      }
+
+      setUpdateProgress((prev) => ({ ...prev, current: prev.current + 1 }))
+    }
+
+    setUpdatingAll(false)
+
+    toast({
+      title: 'Bulk Update Complete',
+      description: `Successfully updated ${successCount} addon${successCount !== 1 ? 's' : ''}. ${failCount > 0 ? `Failed: ${failCount}` : ''}`,
+    })
+  }, [savedAddons, latestVersions, updateSavedAddonManifest, toast])
 
   useEffect(() => {
     const init = async () => {
@@ -477,11 +512,23 @@ export function SavedAddonLibrary() {
                     variant="outline"
                     size="sm"
                     onClick={handleRefresh}
-                    disabled={checkingUpdates || checkingHealth || savedAddons.length === 0}
+                    disabled={checkingUpdates || checkingHealth || updatingAll || savedAddons.length === 0}
                   >
                     <RefreshCw className={`h-4 w-4 mr-2 ${checkingUpdates || checkingHealth ? 'animate-spin' : ''}`} />
                     Refresh
                   </Button>
+                  {savedAddons.some(a => latestVersions[a.manifest.id] && latestVersions[a.manifest.id] !== a.manifest.version) && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={handleUpdateAll}
+                      disabled={updatingAll}
+                      className="bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      <RefreshCw className={`h-4 w-4 mr-2 ${updatingAll ? 'animate-spin' : ''}`} />
+                      {updatingAll ? `Updating (${updateProgress.current}/${updateProgress.total})` : 'Update All Available'}
+                    </Button>
+                  )}
                   <Button size="sm" onClick={handleOpenAddDialog}>
                     <Plus className="mr-2 h-4 w-4" />
                     Add Addon

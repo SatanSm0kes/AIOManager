@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff } from 'lucide-react'
+import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff, ShieldAlert } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { useSearchParams } from 'react-router-dom'
 import pkg from '../../package.json'
@@ -101,6 +101,30 @@ export function LoginPage() {
                     <h1 className="text-3xl font-bold tracking-tight">AIOManager</h1>
                     <p className="text-muted-foreground">One manager to rule them all.</p>
                 </div>
+
+                {!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && (
+                    <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg space-y-2 animate-in slide-in-from-top-2 duration-500">
+                        <div className="flex items-center gap-2 text-destructive font-semibold">
+                            <ShieldAlert className="h-5 w-5" />
+                            <span>Insecure Connection Detected</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                            AIOManager <strong>only works</strong> over a <strong>Secure Context (HTTPS)</strong>.
+                            Encryption and Sync APIs are disabled by your browser on insecure connections.
+                            Please use a reverse proxy or access via <code>localhost</code>.
+                        </p>
+                        <div className="pt-1">
+                            <a
+                                href="https://github.com/Sonicx161/AIOManager#secure-context-https-required"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-destructive/80 hover:text-destructive underline flex items-center gap-1"
+                            >
+                                Advanced: Remote HTTP Workaround
+                            </a>
+                        </div>
+                    </div>
+                )}
 
                 <Tabs value={mode} onValueChange={(v) => { setMode(v as any); setShowPassword(false); }} className="w-full">
                     <TabsList className="grid w-full grid-cols-2 mb-6 h-12">

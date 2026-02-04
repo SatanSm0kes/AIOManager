@@ -15,6 +15,7 @@ import { useAccountStore } from '@/store/accountStore'
 import { useAuthStore } from '@/store/authStore'
 import { decrypt } from '@/lib/crypto'
 import { stremioClient } from '@/api/stremio-client'
+import { updateAddons } from '@/api/addons'
 import { AddonDescriptor } from '@/types/addon'
 import { CinemetaManifest, CinemetaConfigState, CinemetaPatchStatus } from '@/types/cinemeta'
 import {
@@ -124,10 +125,11 @@ export function CinemetaConfigurationDialog({
       updatedAddons[cinemetaIndex] = {
         ...currentAddons[cinemetaIndex],
         manifest: modifiedManifest,
+        metadata: addon.metadata, // Preserve custom name/logo
       }
 
-      // 7. Sync to Stremio API
-      await stremioClient.setAddonCollection(authKey, updatedAddons)
+      // 7. Sync to Stremio API (using wrapper to preserve metadata)
+      await updateAddons(authKey, updatedAddons)
 
       // 8. Sync account state (refresh local data)
       await syncAccount(accountId)
@@ -179,9 +181,10 @@ export function CinemetaConfigurationDialog({
       updatedAddons[cinemetaIndex] = {
         ...currentAddons[cinemetaIndex],
         manifest: originalManifest,
+        metadata: addon.metadata, // Preserve custom name/logo on reset too
       }
 
-      await stremioClient.setAddonCollection(authKey, updatedAddons)
+      await updateAddons(authKey, updatedAddons)
       await syncAccount(accountId)
 
       // 4. Reset toggles

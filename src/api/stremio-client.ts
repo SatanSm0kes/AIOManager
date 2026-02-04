@@ -55,7 +55,11 @@ export class StremioClient {
       })
 
       if (response.data?.error) {
-        throw new Error(response.data.error.message || 'Login failed')
+        // Carry forward the specific error message from Stremio (e.g., USER_NOT_FOUND)
+        const errData = response.data.error
+        const err = new Error(errData.message || 'Login failed')
+          ; (err as any).code = errData.code || errData.message // Sometimes code is in message field in older APIs
+        throw err
       }
 
       if (!response.data?.result?.authKey) {
@@ -72,6 +76,34 @@ export class StremioClient {
           throw new Error('Network error - check your internet connection or CORS configuration')
         }
         throw new Error(error.response?.data?.error || error.message || 'Login failed')
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Register a new Stremio account
+   */
+  async register(email: string, password: string): Promise<LoginResponse> {
+    try {
+      const response = await this.client.post('/api/register', {
+        type: 'Auth',
+        email,
+        password,
+      })
+
+      if (response.data?.error) {
+        throw new Error(response.data.error.message || 'Registration failed')
+      }
+
+      if (!response.data?.result?.authKey) {
+        throw new Error('Invalid registration response - no auth key')
+      }
+
+      return response.data.result
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new Error(error.response?.data?.error || error.message || 'Registration failed')
       }
       throw error
     }
@@ -176,10 +208,10 @@ export class StremioClient {
       manifestUrl.includes(domain)
     )
 
-    // Add a 5-minute cache buster (300000ms = 5 minutes)
-    // All requests within the same 5 minute window will use the same cache value
-    const fiveMinuteInterval = Math.floor(Date.now() / 300000)
-    const cacheBuster = `cb=${fiveMinuteInterval}`
+    // Add a 30-minute cache buster (1800000ms = 30 minutes)
+    // Increased from 5 minutes to reduce proxy usage and improve performance
+    const interval = Math.floor(Date.now() / 1800000)
+    const cacheBuster = `cb=${interval}`
     const separator = manifestUrl.includes('?') ? '&' : '?'
     const finalManifestUrl = `${manifestUrl}${separator}${cacheBuster}`
 

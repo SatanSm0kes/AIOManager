@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { useActivityStore, ActivityItem } from '@/store/activityStore'
 import {
     Activity,
@@ -14,15 +15,24 @@ import {
     ChevronLeft,
     ChevronRight,
     PlayCircle,
+    Moon,
+    Zap,
+    CheckCircle,
 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '../components/ui/avatar'
 import { subHours, isWeekend, subDays, differenceInMinutes } from 'date-fns'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export function MetricsPage() {
-    const { history } = useActivityStore()
+    const { history, initialize, fetchActivity } = useActivityStore()
+
+    useEffect(() => {
+        initialize().then(() => {
+            fetchActivity()
+        })
+    }, [initialize, fetchActivity])
 
     const stats = useMemo(() => {
         if (history.length === 0) return null
@@ -54,7 +64,6 @@ export function MetricsPage() {
         const abandonedMovies: typeof history = []
 
         // Binge Logic (Global Leaderboard)
-        const userBinges: Record<string, { duration: number, items: typeof history }> = {}
 
         const twoDaysAgo = subHours(new Date(), 48)
         const thirtyDaysAgo = subDays(new Date(), 30)
@@ -139,9 +148,9 @@ export function MetricsPage() {
         })
 
         // --- BINGE CALCULATION (Global) ---
-        // Iterate chronologically for every user to find their max binge
         const chronoHistory = [...history].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
         const tempBingeTracker: Record<string, { currentChain: ActivityItem[], lastTime: Date }> = {}
+        const userBinges: Record<string, { duration: number, items: ActivityItem[] }> = {}
 
         chronoHistory.forEach((h: ActivityItem) => {
             const uid = h.accountId
@@ -151,13 +160,11 @@ export function MetricsPage() {
                 const tracker = tempBingeTracker[uid]
                 const diff = differenceInMinutes(h.timestamp, tracker.lastTime)
 
-                // Binge Logic: < 90 mins gap means continued watching
                 if (diff < 90) {
                     tracker.currentChain.push(h)
                     tracker.lastTime = h.timestamp
                 } else {
-                    // Check if previous chain was max
-                    const currentDuration = tracker.currentChain.length * 30 // Approx
+                    const currentDuration = tracker.currentChain.length * 30
                     if (!userBinges[uid] || currentDuration > userBinges[uid].duration) {
                         userBinges[uid] = { duration: currentDuration, items: [...tracker.currentChain] }
                     }
@@ -166,7 +173,6 @@ export function MetricsPage() {
                 }
             }
         })
-        // Final check for trailing binges
         Object.keys(tempBingeTracker).forEach(uid => {
             const tracker = tempBingeTracker[uid]
             const currentDuration = tracker.currentChain.length * 30
@@ -175,106 +181,86 @@ export function MetricsPage() {
             }
         })
 
-        // --- STREAK CALCULATION (Best & Current) ---
+        // --- STREAK CALCULATION ---
         const streakStats = Object.keys(userStats).map(uid => {
             const u = userStats[uid]
-            // Calculate Best Streak
             u.allDates.sort((a, b) => a.getTime() - b.getTime())
-
-            let currentStreak = 0
-            let bestStreak = 0
-            let tempStreak = 0
-
+            let currentStreak = 0, bestStreak = 0, tempStreak = 0
             if (u.allDates.length > 0) {
-                // Calculate Best
                 for (let i = 0; i < u.allDates.length; i++) {
-                    if (i === 0) {
-                        tempStreak = 1
-                    } else {
+                    if (i === 0) tempStreak = 1
+                    else {
                         const diffDays = Math.floor((u.allDates[i].getTime() - u.allDates[i - 1].getTime()) / (1000 * 60 * 60 * 24))
                         if (diffDays === 0) continue
-                        if (diffDays === 1) {
-                            tempStreak++
-                        } else {
-                            bestStreak = Math.max(bestStreak, tempStreak)
-                            tempStreak = 1
-                        }
+                        if (diffDays === 1) tempStreak++
+                        else { bestStreak = Math.max(bestStreak, tempStreak); tempStreak = 1 }
                     }
                 }
                 bestStreak = Math.max(bestStreak, tempStreak)
-
-                // Calculate Current
                 const daysSinceLast = Math.floor((new Date().getTime() - u.lastActive.getTime()) / (1000 * 60 * 60 * 24))
-                if (daysSinceLast <= 1) {
-                    currentStreak = tempStreak // Assume tempStreak is current if active recently
-                }
+                if (daysSinceLast <= 1) currentStreak = tempStreak
             }
-
-            // Re-fetch Binge for this user (using the map we fixed earlier)
             const binge = userBinges[uid] || { duration: 0, items: [] }
-
             return {
-                id: uid,
-                name: u.name,
-                currentStreak,
-                bestStreak,
-                avatarChar: u.name[0],
-                count: u.count,
-                duration: u.duration,
-                recentHistory: u.recentHistory,
-                bingeDuration: binge.duration,
-                bingeItems: binge.items
+                id: uid, name: u.name, currentStreak, bestStreak, avatarChar: u.name[0],
+                count: u.count, duration: u.duration, recentHistory: u.recentHistory,
+                bingeDuration: binge.duration, bingeItems: binge.items
             }
-        }).sort((a, b) => b.bestStreak - a.bestStreak)
-
+        })
 
         // --- FORMATTING ---
-        const leaderboard = streakStats.sort((a, b) => b.count - a.count).map((u, i) => ({ ...u, rank: i + 1 }))
+        const leaderboard = [...streakStats].sort((a, b) => b.count - a.count).map((u, i) => ({ ...u, rank: i + 1 }))
         const bingeMasters = [...streakStats].sort((a, b) => b.bingeDuration - a.bingeDuration)
         const streakMasters = [...streakStats].sort((a, b) => b.bestStreak - a.bestStreak)
-
-        const topTrending = Object.values(trendingItems)
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 10)
-            .map(t => t.item)
-
-        const topAllTime = Object.values(contentStats)
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 20) // Top 20 for Vault
-            .map(c => ({ count: c.count, item: c.item }))
-
+        const topTrending = Object.values(trendingItems).sort((a, b) => b.count - a.count).slice(0, 10).map(t => t.item)
+        const topAllTime = Object.values(contentStats).sort((a, b) => b.count - a.count).slice(0, 20).map(c => ({ count: c.count, item: c.item }))
         const maxActivityHour = Math.max(...itemsByHour)
         const peakHour = itemsByHour.indexOf(maxActivityHour)
 
-        // Funnel Stats (Started -> Engaged -> Finished)
-        let startedCount = 0
-        let engagedCount = 0
-        let finishedCount = 0
+        let startedCount = 0, engagedCount = 0, finishedCount = 0
         history.forEach(h => {
             if (h.progress > 0) startedCount++
             if (h.progress >= 50) engagedCount++
             if (h.progress >= 90) finishedCount++
         })
 
+        // 11. Community Awards (Fun Logic)
+        const userAwardMap: Record<string, { midnightPlays: number, weekendPlays: number, totalStarts: number, totalFinishes: number }> = {}
+        history.forEach(h => {
+            if (!userAwardMap[h.accountId]) userAwardMap[h.accountId] = { midnightPlays: 0, weekendPlays: 0, totalStarts: 0, totalFinishes: 0 }
+            const m = userAwardMap[h.accountId]
+            const hour = new Date(h.timestamp).getHours()
+            const day = new Date(h.timestamp).getDay()
+            if (hour >= 0 && hour <= 5) m.midnightPlays++
+            if (day === 0 || day === 6) m.weekendPlays++
+            if (h.progress > 0) m.totalStarts++
+            if (h.progress >= 90) m.totalFinishes++
+        })
+
+        const midnightSnackers = Object.entries(userAwardMap)
+            .map(([id, data]) => ({ id, name: userStats[id]?.name || 'Unknown', count: data.midnightPlays }))
+            .filter(u => u.count > 0).sort((a, b) => b.count - a.count).slice(0, 5)
+
+        const weekendWarriors = Object.entries(userAwardMap)
+            .map(([id, data]) => ({ id, name: userStats[id]?.name || 'Unknown', count: data.weekendPlays }))
+            .filter(u => u.count > 0).sort((a, b) => b.count - a.count).slice(0, 5)
+
+        const completionChampions = Object.entries(userAwardMap)
+            .map(([id, data]) => ({
+                id, name: userStats[id]?.name || 'Unknown',
+                rate: data.totalStarts > 0 ? (data.totalFinishes / data.totalStarts) * 100 : 0,
+                finishes: data.totalFinishes
+            }))
+            .filter(u => u.finishes > 5).sort((a, b) => b.rate - a.rate).slice(0, 5)
+
         return {
             totalItems: history.length,
             totalHours: Math.round(totalDurationMinutes / 60),
-            leaderboard,
-            streakMasters,
-            bingeMasters,
-            itemsByHour,
-            maxActivityHour,
-            peakHour,
+            leaderboard, streakMasters, bingeMasters, itemsByHour, maxActivityHour, peakHour,
             funnel: { started: startedCount, engaged: engagedCount, finished: finishedCount },
-            weekendCount,
-            weekdayCount,
-            typeCounts,
-            topTrending,
-            topAllTime,
-            abandonedSeries,
-            abandonedMovies,
-            dayCounts,
-            longestMovie
+            weekendCount, weekdayCount, typeCounts, topTrending, topAllTime,
+            abandonedSeries, abandonedMovies, dayCounts, longestMovie,
+            awards: { midnightSnackers, weekendWarriors, completionChampions }
         }
     }, [history])
 
@@ -298,17 +284,93 @@ export function MetricsPage() {
             </div>
 
             <Tabs defaultValue="pulse" className="w-full">
-                <div className="flex justify-start mb-8 px-4 overflow-x-auto">
-                    <TabsList className="grid w-full max-w-2xl grid-cols-4 min-w-[350px]">
-                        <TabsTrigger value="pulse">Pulse</TabsTrigger>
-                        <TabsTrigger value="community">Community</TabsTrigger>
-                        <TabsTrigger value="deep-dive">Deep Dive</TabsTrigger>
-                        <TabsTrigger value="vault">The Vault</TabsTrigger>
+                <div className="flex justify-start mb-8 px-4 overflow-x-auto scrollbar-hide">
+                    <TabsList className="inline-flex w-auto whitespace-nowrap">
+                        <TabsTrigger value="pulse" className="shrink-0 px-8">Pulse</TabsTrigger>
+                        <TabsTrigger value="community" className="shrink-0 px-8">Community</TabsTrigger>
+                        <TabsTrigger value="deep-dive" className="shrink-0 px-8">Deep Dive</TabsTrigger>
+                        <TabsTrigger value="vault" className="shrink-0 px-8">The Vault</TabsTrigger>
                     </TabsList>
                 </div>
 
                 {/* TAB 1: PULSE (Overview) */}
-                <TabsContent value="pulse" className="space-y-8">
+                <TabsContent value="pulse" className="space-y-12">
+                    {/* COMMUNITY AWARDS */}
+                    <div className="px-4 space-y-6">
+                        <div className="flex items-center gap-3">
+                            <Trophy className="h-6 w-6 text-yellow-500" />
+                            <h2 className="text-2xl font-black">Community Awards</h2>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {/* Midnight Snackers */}
+                            <Card className="bg-indigo-500/5 border-indigo-500/20 group hover:border-indigo-500/40 transition-colors">
+                                <CardHeader className="pb-2">
+                                    <CardTitle className="flex items-center gap-2 text-indigo-400">
+                                        <Moon className="h-4 w-4" /> Midnight Snackers
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    {stats.awards.midnightSnackers.map((u, i) => (
+                                        <div key={u.id} className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-black text-indigo-500/50">#{i + 1}</span>
+                                                <span className="font-bold text-sm truncate max-w-[120px]">{u.name}</span>
+                                            </div>
+                                            <Badge variant="outline" className="text-[10px] bg-indigo-500/10 text-indigo-400 border-indigo-500/20">
+                                                {u.count} Late Night Plays
+                                            </Badge>
+                                        </div>
+                                    ))}
+                                    {stats.awards.midnightSnackers.length === 0 && <div className="text-xs italic text-muted-foreground">No night owls yet...</div>}
+                                </CardContent>
+                            </Card>
+
+                            {/* Weekend Warriors */}
+                            <Card className="bg-orange-500/5 border-orange-500/20 group hover:border-orange-500/40 transition-colors">
+                                <CardHeader className="pb-2">
+                                    <CardTitle className="flex items-center gap-2 text-orange-400">
+                                        <Zap className="h-4 w-4" /> Weekend Warriors
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    {stats.awards.weekendWarriors.map((u, i) => (
+                                        <div key={u.id} className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-black text-orange-500/50">#{i + 1}</span>
+                                                <span className="font-bold text-sm truncate max-w-[120px]">{u.name}</span>
+                                            </div>
+                                            <Badge variant="outline" className="text-[10px] bg-orange-500/10 text-orange-400 border-orange-500/20">
+                                                {u.count} Weekend Plays
+                                            </Badge>
+                                        </div>
+                                    ))}
+                                </CardContent>
+                            </Card>
+
+                            {/* Completion Champions */}
+                            <Card className="bg-emerald-500/5 border-emerald-500/20 group hover:border-emerald-500/40 transition-colors">
+                                <CardHeader className="pb-2">
+                                    <CardTitle className="flex items-center gap-2 text-emerald-400">
+                                        <CheckCircle className="h-4 w-4" /> Completionists
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    {stats.awards.completionChampions.map((u, i) => (
+                                        <div key={u.id} className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-black text-emerald-500/50">#{i + 1}</span>
+                                                <span className="font-bold text-sm truncate max-w-[120px]">{u.name}</span>
+                                            </div>
+                                            <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                                                {Math.round(u.rate)}% Finished
+                                            </Badge>
+                                        </div>
+                                    ))}
+                                </CardContent>
+                            </Card>
+                        </div>
+                    </div>
+
                     {/* TRENDING NOW */}
                     <div className="space-y-4 group/trending">
                         <div className="flex items-center justify-between px-4">
@@ -720,6 +782,7 @@ export function MetricsPage() {
                             ))}
                         </div>
                     </div>
+
                 </TabsContent>
             </Tabs>
         </div>

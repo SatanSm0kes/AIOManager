@@ -3,10 +3,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
-import { RefreshCw, Users } from 'lucide-react'
+import { RefreshCw, Users, GripHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { AccountCard } from './AccountCard'
 import { BulkActionsDialog } from './BulkActionsDialog'
+import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import {
   DndContext,
   closestCenter,
@@ -23,7 +24,6 @@ import {
   rectSortingStrategy,
 } from '@dnd-kit/sortable'
 import { SortableAccountCard } from './SortableAccountCard'
-import { GripHorizontal } from 'lucide-react'
 
 export function AccountList() {
   const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
@@ -258,6 +258,7 @@ export function AccountList() {
           </DialogHeader>
           <BulkActionsDialog
             selectedAccounts={selectedAccounts}
+            allAccounts={accounts}
             onClose={() => {
               setShowBulkActions(false)
               clearSelection()
@@ -266,8 +267,7 @@ export function AccountList() {
         </DialogContent>
       </Dialog>
 
-      {/* Shared Delete Confirmation */}
-      <ConfirmationDialog // Importing ConfirmationDialog from AccountCard's logic source or ui folder
+      <ConfirmationDialog
         open={deleteConfirmation.open}
         onOpenChange={(open) => setDeleteConfirmation(prev => ({ ...prev, open }))}
         title={`Delete ${deleteConfirmation.accountIds.length > 1 ? `${deleteConfirmation.accountIds.length} Accounts` : 'Account'}`}
@@ -280,5 +280,3 @@ export function AccountList() {
     </div>
   )
 }
-
-import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'

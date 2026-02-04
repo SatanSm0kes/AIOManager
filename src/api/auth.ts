@@ -15,3 +15,10 @@ export async function validateAuthKey(authKey: string): Promise<boolean> {
     return false
   }
 }
+
+export async function registerAccount(
+  email: string,
+  password: string
+): Promise<LoginResponse> {
+  return stremioClient.register(email, password)
+}

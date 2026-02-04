@@ -4,7 +4,7 @@ import path from 'path'
 import packageJson from './package.json'
 
 export default defineConfig({
-  base: './', // Use relative paths for homelab/GH Pages compatibility
+  base: '/', // Use absolute paths to fix deep-link reloads
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify(packageJson.version),
@@ -15,6 +15,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:1610',

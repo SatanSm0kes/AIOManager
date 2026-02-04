@@ -179,7 +179,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
                 set({ deletedItemIds: new Set(deletedIds) })
             }
 
-            // Load cached history for initial render
+            // Load cached history
             const stored = await localforage.getItem<ActivityItem[]>(STORAGE_KEY)
             if (stored) {
                 const parsed = stored.map(item => ({
@@ -214,26 +214,18 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
 
                     console.log(`[Activity] Fetched ${libraryItems.length} library items for ${account.name || account.id}`)
 
-                    // Filter and transform
+                    // Build History (watched items only)
                     const activityItems = libraryItems
                         .filter(item => {
-                            // Only include items that were actually watched
                             if (!isActuallyWatched(item)) return false
-
-                            // Check if user deleted this from history
                             const uniqueId = getUniqueItemId(item)
                             const blacklistKey = `${account.id}:${uniqueId}`
-                            if (deletedItemIds.has(blacklistKey)) {
-                                return false
-                            }
-
-                            return true
+                            return !deletedItemIds.has(blacklistKey)
                         })
                         .map(item => {
                             const uniqueItemId = getUniqueItemId(item)
                             const timestamp = getWatchTimestamp(item)
                             const { season, episode } = getSeasonEpisode(item)
-
                             const duration = item.state?.duration || 0
                             const timeOffset = item.state?.timeOffset || 0
                             const progress = duration > 0 ? (timeOffset / duration) * 100 : 0
@@ -260,11 +252,10 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
                     freshItems.push(...activityItems)
                 } catch (err) {
                     console.warn(`Failed to fetch library for account ${account.id}:`, err)
-                    // Continue with other accounts
                 }
             }
 
-            // Sort by timestamp (newest first)
+            // Sort history by timestamp (newest first)
             freshItems.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
 
             // Save and update state

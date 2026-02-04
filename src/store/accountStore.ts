@@ -5,6 +5,7 @@ import {
   updateAddons,
 } from '@/api/addons'
 import { loginWithCredentials } from '@/api/auth'
+import { LoginResponse } from '@/api/stremio-client'
 import { decrypt, encrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
 import { accountExportSchema } from '@/lib/validation'
@@ -109,10 +110,12 @@ interface AccountStore {
   addAccountByAuthKey: (authKey: string, name: string) => Promise<void>
   addAccountByCredentials: (email: string, password: string, name: string) => Promise<void>
   removeAccount: (id: string) => Promise<void>
-  syncAccount: (id: string) => Promise<void>
+  syncAccount: (id: string, forceRefresh?: boolean) => Promise<void>
   syncAllAccounts: () => Promise<void>
+  repairAccount: (id: string) => Promise<void>
   installAddonToAccount: (accountId: string, addonUrl: string) => Promise<void>
   removeAddonFromAccount: (accountId: string, transportUrl: string) => Promise<void>
+  removeAddonByIndexFromAccount: (accountId: string, index: number) => Promise<void>
   reorderAddons: (accountId: string, newOrder: AddonDescriptor[]) => Promise<void>
   exportAccounts: (includeCredentials: boolean) => Promise<string>
   importAccounts: (json: string, isSilent?: boolean) => Promise<void>
@@ -120,11 +123,13 @@ interface AccountStore {
     id: string,
     data: { name: string; authKey?: string; email?: string; password?: string }
   ) => Promise<void>
-  toggleAddonProtection: (accountId: string, transportUrl: string, isProtected: boolean) => Promise<void>
-  toggleAddonEnabled: (accountId: string, transportUrl: string, isEnabled: boolean, silent?: boolean) => Promise<void>
-  updateAddonMetadata: (accountId: string, transportUrl: string, metadata: { customName?: string; customLogo?: string; customDescription?: string }) => Promise<void>
+  toggleAddonProtection: (accountId: string, transportUrl: string, isProtected: boolean, targetIndex?: number) => Promise<void>
+  toggleAddonEnabled: (accountId: string, transportUrl: string, isEnabled: boolean, silent?: boolean, targetIndex?: number) => Promise<void>
+  updateAddonMetadata: (accountId: string, transportUrl: string, metadata: { customName?: string; customLogo?: string; customDescription?: string }, targetIndex?: number) => Promise<void>
   moveAccount: (id: string, direction: 'up' | 'down') => Promise<void>
   reorderAccounts: (newOrder: string[]) => Promise<void>
+  bulkProtectAddons: (accountId: string, isProtected: boolean) => Promise<void>
+  removeLocalAddons: (accountId: string, transportUrls: string[]) => Promise<void>
   clearError: () => void
   reset: () => Promise<void>
 }
@@ -194,10 +199,31 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   addAccountByCredentials: async (email, password, name) => {
     set({ loading: true, error: null })
     try {
-      // Login to get auth key
-      const response = await loginWithCredentials(email, password)
+      // 1. Attempt Login
+      let response: LoginResponse
+      try {
+        response = await loginWithCredentials(email, password)
+      } catch (loginError: any) {
+        // 2. If login fails with "USER_NOT_FOUND", attempt auto-registration
+        const isUserNotFound = loginError.code === 'USER_NOT_FOUND' ||
+          loginError.message?.includes('USER_NOT_FOUND') ||
+          loginError.message?.includes('User not found') ||
+          loginError.code?.includes('USER_NOT_FOUND')
 
-      // Fetch addons
+        if (isUserNotFound) {
+          console.log(`[Auth] User not found. Attempting auto-registration for: ${email}`)
+          const { registerAccount } = await import('@/api/auth')
+          response = await registerAccount(email, password)
+          toast({
+            title: 'Stremio Account Created',
+            description: `Successfully registered ${email} on Stremio.`,
+          })
+        } else {
+          throw loginError
+        }
+      }
+
+      // 3. Fetch addons
       const addons = await getAddons(response.authKey)
 
       // Normalize addon manifests
@@ -245,7 +271,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     await localforage.setItem(STORAGE_KEY, accounts)
   },
 
-  syncAccount: async (id) => {
+  syncAccount: async (id, forceRefresh = false) => {
     set({ loading: true, error: null })
     try {
       const account = get().accounts.find((acc) => acc.id === id)
@@ -264,15 +290,18 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       const mergedAddons = mergeAddons(account.addons, normalizedAddons)
 
-      // Repair & Restore Step: Fetch fresh manifests for ALL addons (Baseline Recovery)
-      // This ensures we always have the developer's original manifest to push back to Stremio
-      // if a user Resets to Default or if an addon is corrupted.
+      // Lazy Baseline Recovery: Only fetch fresh manifests if forceRefresh is true OR if manifest is missing
       set({ loading: true })
       const { stremioClient } = await import('@/api/stremio-client')
       const repairedAddons = await Promise.all(mergedAddons.map(async (addon) => {
         try {
           const addonName = addon.manifest?.name || 'Unknown Addon'
           const now = Date.now()
+
+          // If we already have a manifest and aren't forcing a refresh, skip deep fetch
+          if (!forceRefresh && addon.manifest && addon.manifest.id) {
+            return addon
+          }
 
           // Cinemeta Patch Detection
           let cinemetaPatches = null
@@ -310,11 +339,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         }
       }))
 
-      // Strategy: Direct Manifest Override (Native Stremio Behavior / Raven Method)
-      // We push the state to Stremio if we have custom metadata OR if we just refreshed manifests
-      // that might need to override what Stremio sees as "current".
-      console.log(`[Sync] Pushing state to Stremio (Raven Method: Manifest Override)...`)
-      await updateAddons(authKey, repairedAddons)
+      // Only push back to Stremio if we actually did a refresh OR if there are local customizations
+      // This saves a lot of time on simple refreshes
+      if (forceRefresh) {
+        console.log(`[Sync] Pushing state to Stremio (Repair/Deep Sync)...`)
+        await updateAddons(authKey, repairedAddons)
+      }
 
       const updatedAccount = {
         ...account,
@@ -355,7 +385,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     set({ loading: true, error: null })
     const accounts = get().accounts
 
-    for (const account of accounts) {
+    // Parallelize syncing using Promise.all to significantly speed up multi-account setups
+    await Promise.all(accounts.map(async (account) => {
       try {
         const authKey = await decrypt(account.authKey, getEncryptionKey())
         const addons = await getAddons(authKey)
@@ -368,53 +399,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
         const mergedAddons = mergeAddons(account.addons, normalizedAddons)
 
-        const { stremioClient } = await import('@/api/stremio-client')
-        const repairedAddons = await Promise.all(mergedAddons.map(async (addon) => {
-          try {
-            const addonName = addon.manifest?.name || 'Unknown Addon'
-            const now = Date.now()
-
-            // Cinemeta Patch Detection
-            let cinemetaPatches = null
-            if (isCinemetaAddon(addon)) {
-              cinemetaPatches = detectAllPatches(addon.manifest as CinemetaManifest)
-            }
-
-            // Manifest Baseline Recovery (from Cache or Fetch)
-            let manifestRaw = null
-            const cached = MANIFEST_CACHE[addon.transportUrl]
-            if (cached && (now - cached.timestamp < CACHE_TTL)) {
-              manifestRaw = cached.manifest
-            } else {
-              console.log(`[Sync All] Fetching fresh manifest baseline for: ${addonName}`)
-              const { manifest } = await stremioClient.fetchAddonManifest(addon.transportUrl)
-              manifestRaw = manifest
-              MANIFEST_CACHE[addon.transportUrl] = { manifest: manifestRaw, timestamp: now }
-            }
-
-            let repairedManifest = sanitizeAddonManifest(manifestRaw)
-
-            // Cinemeta Patch Restore
-            if (cinemetaPatches) {
-              repairedManifest = applyCinemetaConfiguration(repairedManifest as CinemetaManifest, {
-                removeSearchArtifacts: cinemetaPatches.searchArtifactsPatched,
-                removeStandardCatalogs: cinemetaPatches.standardCatalogsPatched,
-                removeMetaResource: cinemetaPatches.metaResourcePatched
-              }) as AddonDescriptor['manifest']
-            }
-
-            return { ...addon, manifest: repairedManifest }
-          } catch (e) {
-            return { ...addon, manifest: sanitizeAddonManifest(addon.manifest) }
-          }
-        }))
-
-        // Push state to Stremio (Raven Method: Manifest Override) applying local customizations
-        await updateAddons(authKey, repairedAddons)
-
+        // Parallel sync for syncAll is always "Lazy" (forceRefresh = false)
         const updatedAccount = {
           ...account,
-          addons: repairedAddons,
+          addons: mergedAddons,
           lastSync: new Date(),
           status: 'active' as const,
         }
@@ -438,10 +426,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
           description: `Unable to sync "${account.name}". Please check your credentials.`,
         })
       }
-    }
+    }))
 
     await localforage.setItem(STORAGE_KEY, get().accounts)
     set({ loading: false })
+  },
+
+  repairAccount: async (id) => {
+    return get().syncAccount(id, true)
   },
 
   installAddonToAccount: async (accountId, addonUrl) => {
@@ -495,7 +487,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         ...addon,
         manifest: sanitizeAddonManifest(addon.manifest),
       }))
-      const mergedOrder = mergeAddons(account.addons, normalizedAddons)
+
+      // Filter out the removed addon from LOCAL state before merging
+      // This ensures that if it was "disabled" (and thus kept by mergeAddons), it is now explicitly dropped.
+      const localAddonsFiltered = account.addons.filter(a => a.transportUrl !== transportUrl)
+
+      const mergedOrder = mergeAddons(localAddonsFiltered, normalizedAddons)
 
       const updatedAccount = {
         ...account,
@@ -507,6 +504,49 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to remove addon'
+      set({ error: message })
+      throw error
+    } finally {
+      set({ loading: false })
+    }
+  },
+
+  removeAddonByIndexFromAccount: async (accountId, index) => {
+    set({ loading: true, error: null })
+    try {
+      const account = get().accounts.find((acc) => acc.id === accountId)
+      if (!account) {
+        throw new Error('Account not found')
+      }
+
+      // Check if addon is protected before removing
+      const addonToRemove = account.addons[index]
+      if (!addonToRemove) throw new Error('Addon not found at index')
+
+      if (addonToRemove.flags?.protected) {
+        throw new Error(`Addon "${addonToRemove.manifest.name}" is protected and cannot be removed.`)
+      }
+
+      // 1. Remove ONLY the item at the specific index (order-safe for duplicates)
+      const updatedAddons = [...account.addons]
+      updatedAddons.splice(index, 1)
+
+      // 2. Local Update
+      const updatedAccount = {
+        ...account,
+        addons: updatedAddons,
+        lastSync: new Date(),
+      }
+      const accounts = get().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
+      set({ accounts })
+      await localforage.setItem(STORAGE_KEY, accounts)
+
+      // 3. Remote Sync (Push the entire collection to preserve order)
+      const authKey = await decrypt(account.authKey, getEncryptionKey())
+      await updateAddons(authKey, updatedAddons)
+
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to remove addon'
       set({ error: message })
@@ -969,13 +1009,18 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     }
   },
 
-  toggleAddonProtection: async (accountId, transportUrl, isProtected) => {
+  toggleAddonProtection: async (accountId, transportUrl, isProtected, targetIndex) => {
     try {
       const account = get().accounts.find((acc) => acc.id === accountId)
       if (!account) return
 
-      const updatedAddons = account.addons.map(addon => {
-        if (addon.transportUrl === transportUrl) {
+      const updatedAddons = account.addons.map((addon, index) => {
+        // If targetIndex provided, strict match. Otherwise, match all by URL.
+        const shouldUpdate = typeof targetIndex === 'number'
+          ? index === targetIndex
+          : addon.transportUrl === transportUrl
+
+        if (shouldUpdate) {
           return {
             ...addon,
             flags: {
@@ -1009,14 +1054,19 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     }
   },
 
-  toggleAddonEnabled: async (accountId, transportUrl, isEnabled, silent = false) => {
+  toggleAddonEnabled: async (accountId, transportUrl, isEnabled, silent = false, targetIndex) => {
     try {
       if (!silent) set({ loading: true, error: null })
       const account = get().accounts.find((acc) => acc.id === accountId)
       if (!account) return
 
-      const updatedAddons = account.addons.map((addon) => {
-        if (addon.transportUrl === transportUrl) {
+      const updatedAddons = account.addons.map((addon, index) => {
+        // If targetIndex provided, strict match. Otherwise, match all by URL.
+        const shouldUpdate = typeof targetIndex === 'number'
+          ? index === targetIndex
+          : addon.transportUrl === transportUrl
+
+        if (shouldUpdate) {
           return {
             ...addon,
             flags: {
@@ -1067,14 +1117,19 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
     }
   },
 
-  updateAddonMetadata: async (accountId, transportUrl, metadata) => {
+  updateAddonMetadata: async (accountId, transportUrl, metadata, targetIndex) => {
     try {
       set({ loading: true, error: null })
       const account = get().accounts.find((acc) => acc.id === accountId)
       if (!account) throw new Error('Account not found')
 
-      const updatedAddons = account.addons.map((addon) => {
-        if (addon.transportUrl === transportUrl) {
+      const updatedAddons = account.addons.map((addon, index) => {
+        // If targetIndex provided, strict match. Otherwise, match all by URL.
+        const shouldUpdate = typeof targetIndex === 'number'
+          ? index === targetIndex
+          : addon.transportUrl === transportUrl
+
+        if (shouldUpdate) {
           return {
             ...addon,
             metadata: {
@@ -1092,16 +1147,66 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       set({ accounts })
       await localforage.setItem(STORAGE_KEY, accounts)
 
-      // CRITICAL: Trigger Sync to Stremio (The "Raven" fix)
-      // This ensures the custom name/logo is pushed to the server immediately
-      console.log(`[Metadata] Triggering sync for account: ${accountId}`)
-      await get().syncAccount(accountId)
+      // CRITICAL: Push to Stremio (Raven Method)
+      const authKey = await decrypt(account.authKey, getEncryptionKey())
+      await updateAddons(authKey, updatedAddons)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update metadata'
       set({ error: message })
       throw error
     } finally {
       set({ loading: false })
+    }
+  },
+
+  bulkProtectAddons: async (accountId, isProtected) => {
+    try {
+      const account = get().accounts.find((acc) => acc.id === accountId)
+      if (!account) return
+
+      const updatedAddons = account.addons.map(addon => ({
+        ...addon,
+        flags: {
+          ...addon.flags,
+          protected: isProtected
+        }
+      }))
+
+      // Update local state immediately (Optimistic UI)
+      const updatedAccount = { ...account, addons: updatedAddons }
+      const accounts = get().accounts.map(acc => acc.id === accountId ? updatedAccount : acc)
+
+      set({ accounts })
+      await localforage.setItem(STORAGE_KEY, accounts)
+
+      // Sync to server
+      const authKey = await decrypt(account.authKey, getEncryptionKey())
+      await updateAddons(authKey, updatedAddons)
+
+    } catch (err) {
+      console.error('Failed to bulk protect addons', err)
+      const message = err instanceof Error ? err.message : 'Failed to save protection status'
+      toast({
+        variant: 'destructive',
+        title: 'Protection Sync Failed',
+        description: message
+      })
+    }
+  },
+
+  removeLocalAddons: async (accountId, transportUrls) => {
+    // Helper to explicitly remove addons from local state (used for deleting disabled/ghost addons)
+    const account = get().accounts.find((acc) => acc.id === accountId)
+    if (!account) return
+
+    const updatedAddons = account.addons.filter(a => !transportUrls.includes(a.transportUrl))
+
+    // Only update if changes were made
+    if (updatedAddons.length !== account.addons.length) {
+      const updatedAccount = { ...account, addons: updatedAddons }
+      const accounts = get().accounts.map(acc => acc.id === accountId ? updatedAccount : acc)
+      set({ accounts })
+      await localforage.setItem(STORAGE_KEY, accounts)
     }
   },
 

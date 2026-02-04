@@ -13,13 +13,13 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { ArrowLeft, GripVertical, Library, RefreshCw, Save, Plus, ShieldCheck } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateAddons } from '@/api/addons'
 import { AddonCard } from './AddonCard'
 import { AddonReorderDialog } from './AddonReorderDialog'
 import { InstallSavedAddonDialog } from './InstallSavedAddonDialog'
 import { BulkSaveDialog } from './BulkSaveDialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { FailoverManager } from '@/components/accounts/FailoverManager'
+import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 
 interface AddonListProps {
   accountId: string
@@ -28,13 +28,81 @@ interface AddonListProps {
 export function AddonList({ accountId }: AddonListProps) {
   const navigate = useNavigate()
   const { accounts } = useAccounts()
-  const { addons, removeAddon, loading } = useAddons(accountId)
+  const account = accounts.find((acc) => acc.id === accountId)
+  const { addons, removeAddonByIndex, loading } = useAddons(accountId)
   const openAddAddonDialog = useUIStore((state) => state.openAddAddonDialog)
   const checkRules = useFailoverStore((state) => state.checkRules)
   const [reorderDialogOpen, setReorderDialogOpen] = useState(false)
   const [installFromLibraryOpen, setInstallFromLibraryOpen] = useState(false)
 
   const [bulkSaveOpen, setBulkSaveOpen] = useState(false)
+
+  // Selection Mode State
+  const [selectedAddonUrls, setSelectedAddonUrls] = useState<Set<string>>(new Set())
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+
+  const toggleAddonSelection = (addonUrl: string) => {
+    setSelectedAddonUrls((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(addonUrl)) {
+        newSet.delete(addonUrl)
+      } else {
+        newSet.add(addonUrl)
+      }
+      return newSet
+    })
+  }
+
+  const toggleSelectionMode = () => {
+    setIsSelectionMode(!isSelectionMode)
+    if (isSelectionMode) {
+      setSelectedAddonUrls(new Set())
+    }
+  }
+
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [protectedInSelection, setProtectedInSelection] = useState(0)
+
+  const handleBulkDeleteClick = () => {
+    if (selectedAddonUrls.size === 0) return
+
+    // Count how many protected addons are selected
+    const protectedCount = addons.filter((addon, index) => {
+      const compositeId = `${addon.transportUrl}::${index}`
+      return selectedAddonUrls.has(compositeId) && addon.flags?.protected
+    }).length
+
+    setProtectedInSelection(protectedCount)
+    setShowDeleteConfirm(true)
+  }
+
+  const handleBulkDeleteConfirm = async () => {
+    if (selectedAddonUrls.size === 0 || !account) return
+
+    try {
+      setUpdatingAll(true)
+
+      // Filter current addons based on selected composite IDs (url::index)
+      const updatedAddons = addons.filter((_, index) => {
+        const compositeId = `${addons[index].transportUrl}::${index}`
+        return !selectedAddonUrls.has(compositeId)
+      })
+
+      // Push the entire updated list to preserve order
+      await useAccountStore.getState().reorderAddons(accountId, updatedAddons)
+
+      toast({ title: 'Addons Deleted', description: `Successfully deleted selected addons.` })
+      setIsSelectionMode(false)
+      setSelectedAddonUrls(new Set())
+      setShowDeleteConfirm(false)
+      await syncAccount(accountId)
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Delete Failed', description: 'Could not delete selected addons.' })
+    } finally {
+      setUpdatingAll(false)
+    }
+  }
+
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [healthStatus, setHealthStatus] = useState<Record<string, boolean>>({})
   const latestVersions = useAddonStore((state) => state.latestVersions)
@@ -44,7 +112,6 @@ export function AddonList({ accountId }: AddonListProps) {
   const syncAccount = useAccountStore((state) => state.syncAccount)
   const { toast } = useToast()
 
-  const account = accounts.find((acc) => acc.id === accountId)
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
 
   const updatesAvailable = addons.filter((addon) => {
@@ -119,24 +186,12 @@ export function AddonList({ accountId }: AddonListProps) {
     if (!account || !encryptionKey) return
 
     try {
-      const authKey = await decrypt(account.authKey, encryptionKey)
-      const protectedAddons = addons.map(addon => ({
-        ...addon,
-        flags: {
-          ...addon.flags,
-          protected: true
-        }
-      }))
-
-      await updateAddons(authKey, protectedAddons)
+      await useAccountStore.getState().bulkProtectAddons(accountId, true)
 
       toast({
         title: 'Addons Protected',
         description: 'All addons have been marked as protected.'
       })
-
-      // Refresh account to reflect changes
-      await syncAccount(accountId)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -144,7 +199,7 @@ export function AddonList({ accountId }: AddonListProps) {
         description: error instanceof Error ? error.message : 'Unknown error'
       })
     }
-  }, [account, encryptionKey, addons, toast, syncAccount, accountId])
+  }, [account, encryptionKey, accountId, toast])
 
   const handleUpdateAll = useCallback(async () => {
     if (!account || !encryptionKey) return
@@ -239,6 +294,7 @@ export function AddonList({ accountId }: AddonListProps) {
         <TabsContent value="addons" className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex flex-wrap gap-2 w-full sm:w-auto ml-auto">
+              {/* 1. Refresh */}
               <Button
                 onClick={handleCheckUpdates}
                 disabled={addons.length === 0 || checkingUpdates}
@@ -252,22 +308,49 @@ export function AddonList({ accountId }: AddonListProps) {
                 </span>
                 <span className="inline xs:hidden">{checkingUpdates ? '...' : 'Refresh'}</span>
               </Button>
+
+              {/* 2. Select / Bulk Actions (Moved here for better flow) */}
+              <Button
+                variant={isSelectionMode ? "secondary" : "outline"}
+                size="sm"
+                onClick={toggleSelectionMode}
+                className="flex-1 sm:flex-none"
+              >
+                {isSelectionMode ? "Cancel" : "Select"}
+              </Button>
+
+              {isSelectionMode && selectedAddonUrls.size > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleBulkDeleteClick}
+                  disabled={updatingAll}
+                  className="flex-1 sm:flex-none"
+                >
+                  Delete ({selectedAddonUrls.size})
+                </Button>
+              )}
+
+              {/* 3. Updates Available (Conditional) */}
               {updatesAvailable.length > 0 && (
                 <Button
                   onClick={handleUpdateAll}
                   disabled={updatingAll}
                   size="sm"
+                  variant="default"
                   className="flex-1 sm:flex-none"
                 >
                   <RefreshCw className={`h-4 w-4 ${updatingAll ? 'animate-spin' : ''}`} />
                   <span className="hidden xs:inline">
-                    {updatingAll ? 'Updating...' : `Update all addons (${updatesAvailable.length})`}
+                    {updatingAll ? 'Updating...' : `Update all (${updatesAvailable.length})`}
                   </span>
                   <span className="inline xs:hidden">
                     {updatingAll ? '...' : `Update (${updatesAvailable.length})`}
                   </span>
                 </Button>
               )}
+
+              {/* 4. Reorder */}
               <Button
                 onClick={() => setReorderDialogOpen(true)}
                 disabled={addons.length === 0}
@@ -279,6 +362,8 @@ export function AddonList({ accountId }: AddonListProps) {
                 <span className="hidden xs:inline">Reorder</span>
                 <span className="inline xs:hidden">Reorder</span>
               </Button>
+
+              {/* 5. Protect */}
               <Button
                 onClick={handleProtectAll}
                 disabled={addons.length === 0}
@@ -289,8 +374,10 @@ export function AddonList({ accountId }: AddonListProps) {
               >
                 <ShieldCheck className="h-4 w-4" />
                 <span className="hidden xs:inline">Protect Addons</span>
-                <span className="inline xs:hidden">Protect Addons</span>
+                <span className="inline xs:hidden">Protect</span>
               </Button>
+
+              {/* 6. Save All */}
               <Button
                 onClick={() => setBulkSaveOpen(true)}
                 disabled={addons.length === 0}
@@ -302,6 +389,8 @@ export function AddonList({ accountId }: AddonListProps) {
                 <span className="hidden xs:inline">Save All</span>
                 <span className="inline xs:hidden">Save All</span>
               </Button>
+
+              {/* 7. Saved Addons */}
               <Button
                 onClick={() => setInstallFromLibraryOpen(true)}
                 size="sm"
@@ -310,8 +399,10 @@ export function AddonList({ accountId }: AddonListProps) {
               >
                 <Library className="h-4 w-4" />
                 <span className="hidden xs:inline">Saved Addons</span>
-                <span className="inline xs:hidden">Saved Addons</span>
+                <span className="inline xs:hidden">Saved</span>
               </Button>
+
+              {/* 8. Install */}
               <Button
                 onClick={() => openAddAddonDialog(accountId)}
                 size="sm"
@@ -331,17 +422,26 @@ export function AddonList({ accountId }: AddonListProps) {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {addons.map((addon) => (
+              {addons.map((addon, index) => (
                 <AddonCard
-                  key={addon.transportUrl}
+                  key={`${addon.transportUrl}-${index}`}
+                  index={index}
                   addon={addon}
                   accountId={accountId}
                   accountAuthKey={account?.authKey || ''}
-                  onRemove={removeAddon}
+                  // For now, removing one instance removes all duplicates (limitation of Stremio API)
+                  onRemove={async () => {
+                    await removeAddonByIndex(accountId, index)
+                  }}
                   onUpdate={handleUpdateAddon}
                   latestVersion={latestVersions[addon.manifest.id]}
                   isOnline={healthStatus[addon.manifest.id]}
                   loading={loading}
+                  isSelectionMode={isSelectionMode}
+                  onToggleSelect={toggleAddonSelection}
+                  // Use composite ID for selection tracking
+                  selectionId={`${addon.transportUrl}::${index}`}
+                  isSelected={selectedAddonUrls.has(`${addon.transportUrl}::${index}`)}
                 />
               ))}
             </div>
@@ -360,15 +460,17 @@ export function AddonList({ accountId }: AddonListProps) {
         onOpenChange={setReorderDialogOpen}
       />
 
-      {account && (
-        <InstallSavedAddonDialog
-          accountId={accountId}
-          accountAuthKey={account.authKey}
-          open={installFromLibraryOpen}
-          onOpenChange={setInstallFromLibraryOpen}
-          installedAddons={addons}
-        />
-      )}
+      {
+        account && (
+          <InstallSavedAddonDialog
+            accountId={accountId}
+            accountAuthKey={account.authKey}
+            open={installFromLibraryOpen}
+            onOpenChange={setInstallFromLibraryOpen}
+            installedAddons={addons}
+          />
+        )
+      }
 
       <BulkSaveDialog
         open={bulkSaveOpen}
@@ -376,6 +478,27 @@ export function AddonList({ accountId }: AddonListProps) {
         addons={addons}
         accountId={accountId}
       />
-    </div>
+
+      <ConfirmationDialog
+        open={showDeleteConfirm}
+        onOpenChange={setShowDeleteConfirm}
+        title={`Delete ${selectedAddonUrls.size} Addons?`}
+        description={
+          <>
+            Are you sure you want to delete {selectedAddonUrls.size} selected addons? This action cannot be undone.
+            {protectedInSelection > 0 && (
+              <p className="mt-2 p-2 bg-destructive/10 text-destructive text-xs rounded border border-destructive/20 font-medium">
+                Note: This includes {protectedInSelection} protected addon{protectedInSelection !== 1 ? 's' : ''}.
+              </p>
+            )}
+          </>
+        }
+        confirmText="Delete Addons"
+        isDestructive={true}
+        onConfirm={handleBulkDeleteConfirm}
+        isLoading={updatingAll}
+        disabled={updatingAll}
+      />
+    </div >
   )
 }

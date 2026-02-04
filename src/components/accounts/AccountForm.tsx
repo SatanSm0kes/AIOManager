@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
-import { AlertCircle, ChevronDown, ChevronUp, ExternalLink, HelpCircle } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronUp, ExternalLink, HelpCircle, Rocket, RefreshCw, Lock } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -136,6 +136,39 @@ export function AccountForm() {
               Auth Key
             </Button>
           </div>
+
+          {!isEditing && mode === 'credentials' && (
+            <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-700">
+              <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+                <Rocket className="h-4 w-4" />
+                <span>Smart Integration Highlights</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                <div className="flex items-start gap-3">
+                  <div className="mt-1 bg-primary/10 p-1.5 rounded-lg text-primary">
+                    <RefreshCw className="h-3 w-3" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold">Auto-Registration</h4>
+                    <p className="text-[10px] text-muted-foreground leading-tight">
+                      Login with any email—if the Stremio account doesn't exist, we'll create it instantly for you. ✨
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="mt-1 bg-primary/10 p-1.5 rounded-lg text-primary">
+                    <Lock className="h-3 w-3" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold">Encrypted Multi-Sync</h4>
+                    <p className="text-[10px] text-muted-foreground leading-tight">
+                      Your data is encrypted locally and synced across instances with military-grade security.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="name">Account Name (optional)</Label>
