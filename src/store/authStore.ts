@@ -183,22 +183,22 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
 
     if (!salt) {
-      // If still no salt, we can't derive the key. 
+      // If still no salt, we can't derive the key.
       // This happens if logging into an old account that didn't sync its salt yet.
       throw new Error('Encryption metadata (salt) is missing from this account backup.')
     }
 
-    // Derive encryption key
     const key = await deriveKey(password, salt)
 
-    // Save password hash to enable future local unlocks
+    // Save password hash locally to satisfy isPasswordSetup()
+    // This removes the "Master password not set up" barrier for synced accounts
     const hash = await hashPassword(password, salt)
     savePasswordHash(hash)
 
     // Save to session storage
     await saveSessionKey(key)
 
-    // Update state
+    // Update state - user is now unlocked
     set({
       encryptionKey: key,
       isLocked: false,

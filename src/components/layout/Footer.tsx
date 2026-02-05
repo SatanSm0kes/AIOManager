@@ -78,7 +78,7 @@ export function Footer() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span>Made with ❤️ by</span>
                 <a
-                  href="https://sonicx161.vercel.app/"
+                  href="https://github.com/sonicx161"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:underline font-medium"
@@ -89,7 +89,7 @@ export function Footer() {
                 <span className="text-muted-foreground/30">•</span>
                 <div className="flex items-center gap-2">
                   <a
-                    href="https://chrise.vercel.app/"
+                    href="https://github.com/sonicx161/AIOManager"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-muted-foreground hover:text-primary transition-colors"

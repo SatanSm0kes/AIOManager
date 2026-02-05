@@ -1,6 +1,6 @@
-# Deploying AIOManager v1.5.1
+# Deploying AIOManager v1.5.2
 
-AIOManager v1.5.1 requires a Node.js server to handle **Autopilot**, **Health Checks**, and **Sync**. 
+AIOManager v1.5.2 requires a Node.js server to handle **Autopilot**, **Health Checks**, and **Sync**. 
 
 ## 1. Docker (Recommended)
 

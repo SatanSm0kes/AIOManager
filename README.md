@@ -66,9 +66,9 @@ The soul of AIOManager is giving you complete authority over your Stremio ecosys
 
 ---
 
-## [1.5.1] - The Stabilization Sweep 🛡️
+## [1.5.2] - The Stabilization Sweep 🛡️
 
-AIOManager v1.5.1 is a maintenance release focused on **reliability, hardening, and UI synchronization**.
+AIOManager v1.5.2 is a maintenance release focused on **reliability, hardening, and UI synchronization**.
 
 ### 🛠️ Key Improvements
 - **Version Detection Fix**: Resolved a bug where multiple addons on the same domain (like AIOMetadata) would misreport version updates due to cache collisions.
