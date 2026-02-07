@@ -409,6 +409,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   const normalizedAddons = updatedAddons.map((addon) => ({
                         ...addon,
                         manifest: sanitizeAddonManifest(addon.manifest),
+                        metadata: {
+                              ...addon.metadata,
+                              lastUpdated: Date.now(),
+                        },
                   }))
 
                   const mergedAddons = mergeAddons(account.addons, normalizedAddons)
@@ -503,15 +507,24 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       },
 
       reorderAddons: async (accountId: string, newOrder: AddonDescriptor[]) => {
+            // Set lastUpdated on all moved/reordered addons to protect them from sync reversion
+            const timestampedOrder = newOrder.map(addon => ({
+                  ...addon,
+                  metadata: {
+                        ...addon.metadata,
+                        lastUpdated: Date.now()
+                  }
+            }))
+
             set({ loading: true, error: null })
             try {
                   const account = get().accounts.find((acc) => acc.id === accountId)
                   if (!account) throw new Error('Account not found')
 
                   const authKey = await decrypt(account.authKey, getEncryptionKey())
-                  await updateAddons(authKey, newOrder, account.id)
+                  await updateAddons(authKey, timestampedOrder, account.id)
 
-                  const updatedAccount = { ...account, addons: newOrder, lastSync: new Date() }
+                  const updatedAccount = { ...account, addons: timestampedOrder, lastSync: new Date() }
                   const accounts = get().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
                   set({ accounts })
                   await localforage.setItem(STORAGE_KEY, accounts)

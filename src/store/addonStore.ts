@@ -679,11 +679,20 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
           const authKey = await decrypt(accountAuthKey, getEncryptionKey())
           const currentAddons = await getAddons(authKey, accountId)
 
-          const { addons: updatedAddons, result: mergeResult } = await mergeAddons(
+          const { addons: mergedAddons, result: mergeResult } = await mergeAddons(
             currentAddons,
             savedAddons,
             accountId
           )
+
+          // CRITICAL: Set lastUpdated timestamp for the grace period fix
+          const updatedAddons = mergedAddons.map(addon => ({
+            ...addon,
+            metadata: {
+              ...(addon.metadata || {}),
+              lastUpdated: Date.now()
+            }
+          }))
 
           await updateAddons(authKey, updatedAddons, accountId)
 

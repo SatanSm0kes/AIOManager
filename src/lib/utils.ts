@@ -117,10 +117,14 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         (localAddon.metadata.customName ||
           localAddon.metadata.customLogo ||
           localAddon.metadata.customDescription)
-      if (localAddon.flags?.enabled === false || localAddon.flags?.protected || hasMetadata) {
+
+      const isRecent = localAddon.metadata?.lastUpdated &&
+        (Date.now() - localAddon.metadata.lastUpdated < 60000)
+
+      if (localAddon.flags?.enabled === false || localAddon.flags?.protected || hasMetadata || isRecent) {
         finalAddons.push({
           ...localAddon,
-          flags: { ...(localAddon.flags || {}), enabled: false }, // If not in remote, it's disabled
+          flags: { ...(localAddon.flags || {}), enabled: isRecent || localAddon.flags?.enabled }, // Keep enabled if recent
         })
       }
     }

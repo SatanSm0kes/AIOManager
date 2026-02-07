@@ -153,9 +153,9 @@ With PostgreSQL enabled and `DATA_DIR` mapped to a persistent volume (for `serve
 
 ---
 
-## [1.5.4] - The Final Polish 💎
+## [1.5.6] - The Library Installation Hotfix 💎
 
-AIOManager v1.5.4 is the **Golden Build**, stabilizing the core experience and resolving critical authentication and sync edge cases.
+AIOManager v1.5.6 addresses critical issues with the "Install from Library" functionality, ensuring reliability and flexibility for users with multiple addon configurations.
 
 ### 🛡️ Critical Fixes
 - **Sync Wipe Prevention**: Fixed a critical bug where corrupted remote data (or `[object Object]` strings) could wipe local accounts on login.

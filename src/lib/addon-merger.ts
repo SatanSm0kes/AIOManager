@@ -40,7 +40,7 @@ export async function mergeAddons(
     const normInstallUrl = normalizeAddonUrl(installUrl).toLowerCase()
     const existingIndex = updatedAddons.findIndex((a) => {
       const normA = normalizeAddonUrl(a.transportUrl).toLowerCase()
-      return a.manifest.id === addonId || normA === normInstallUrl
+      return normA === normInstallUrl
     })
 
     if (existingIndex >= 0) {

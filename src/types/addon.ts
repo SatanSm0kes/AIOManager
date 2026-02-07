@@ -41,5 +41,6 @@ export interface AddonDescriptor {
     customName?: string
     customLogo?: string
     customDescription?: string
+    lastUpdated?: number
   }
 }
